@@ -1,3 +1,30 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  ::selection {
+    background-color: theme("colors.ledger.light");
+    color: theme("colors.ledger.dark");
+  }
+}
+
+@layer components {
+  /* Faint ruled-paper lines, like a real ledger page */
+  .ruled-page {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent 35px,
+      theme("colors.line") 36px
+    );
+  }
+
+  /* Dashed divider between ledger rows, instead of boxed cards */
+  .ledger-row {
+    border-bottom: 1px dashed theme("colors.line");
+  }
+  .ledger-row:last-child {
+    border-bottom: none;
+  }
+}

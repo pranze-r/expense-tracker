@@ -2,17 +2,33 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen p-6 gap-6 text-center">
-      <h1 className="text-2xl font-bold">Expense Tracker</h1>
-      <p className="text-slate-500">
-        Track expenses across multiple shared books, from anywhere.
-      </p>
-      <Link
-        href="/books"
-        className="bg-slate-900 text-white px-6 py-3 rounded-xl font-medium active:scale-95 transition"
-      >
-        Go to my books
-      </Link>
+    <main className="ruled-page flex flex-col min-h-screen">
+      <div className="flex-1 flex flex-col justify-center px-8 py-16">
+        <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-4">
+          No. 001 · Shared ledgers
+        </p>
+        <h1 className="font-display text-5xl leading-[1.05] text-ink mb-6">
+          Every expense,
+          <br />
+          <span className="italic text-ledger">accounted for.</span>
+        </h1>
+        <p className="text-muted text-base leading-relaxed max-w-xs">
+          Keep separate books for trips, households, or teams — shared with
+          whoever needs to see them, updated from anywhere.
+        </p>
+      </div>
+
+      <div className="px-8 pb-12">
+        <Link
+          href="/books"
+          className="group flex items-center justify-between bg-ledger text-paper px-6 py-4 rounded-xl font-medium active:scale-[0.98] transition"
+        >
+          <span>Open my books</span>
+          <span className="font-mono transition-transform group-active:translate-x-0.5">
+            →
+          </span>
+        </Link>
+      </div>
     </main>
   );
 }
