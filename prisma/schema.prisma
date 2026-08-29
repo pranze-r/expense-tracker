@@ -9,8 +9,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -19,8 +20,12 @@ enum Role {
   VIEWER
 }
 
+// id is NOT self-generated here — it's set to match the corresponding
+// row's id in Supabase's auth.users table (see the trigger in
+// supabase/setup.sql). This keeps "who is logged in" (Supabase Auth)
+// and "who owns what data" (this table) as the same identity.
 model User {
-  id        String       @id @default(uuid())
+  id        String       @id
   email     String       @unique
   name      String?
   createdAt DateTime     @default(now())
@@ -36,6 +41,20 @@ model Book {
   members      BookMember[]
   categories   Category[]
   transactions Transaction[]
+  invites      BookInvite[]
+}
+
+// A shareable join link/code for a book. Anyone with the token can
+// join the book (as the given role) once they're logged in.
+model BookInvite {
+  id        String    @id @default(uuid())
+  token     String    @unique @default(uuid())
+  role      Role      @default(EDITOR)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  bookId String
 }
 
 // Join table: who can access which book, and with what permission

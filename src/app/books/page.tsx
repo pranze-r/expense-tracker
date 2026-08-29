@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 type Book = {
   id: string;
@@ -11,14 +13,22 @@ type Book = {
 };
 
 export default function BooksPage() {
+  const router = useRouter();
   const [books, setBooks] = useState<Book[]>([]);
   const [newName, setNewName] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
+  const [invitingId, setInvitingId] = useState<string | null>(null);
 
   async function loadBooks() {
     setLoading(true);
     const res = await fetch("/api/books");
+    if (res.status === 401) {
+      router.push("/login");
+      return;
+    }
     const data = await res.json();
     setBooks(data);
     setLoading(false);
@@ -26,6 +36,8 @@ export default function BooksPage() {
 
   useEffect(() => {
     loadBooks();
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
   }, []);
 
   async function createBook(e: React.FormEvent) {
@@ -42,15 +54,50 @@ export default function BooksPage() {
     loadBooks();
   }
 
+  async function shareInvite(bookId: string) {
+    setInvitingId(bookId);
+    const res = await fetch(`/api/books/${bookId}/invites`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "EDITOR" }),
+    });
+    setInvitingId(null);
+
+    if (!res.ok) return;
+    const invite = await res.json();
+    const link = `${window.location.origin}/invite/${invite.token}`;
+    setInviteLinks((prev) => ({ ...prev, [bookId]: link }));
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(link).catch(() => {});
+    }
+  }
+
+  async function logout() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
+
   return (
     <main className="min-h-screen flex flex-col">
       <header className="px-6 pt-6 pb-4">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition mb-4"
-        >
-          <span className="font-mono">←</span> Home
-        </Link>
+        <div className="flex items-center justify-between mb-4">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition"
+          >
+            <span className="font-mono">←</span> Home
+          </Link>
+          {email && (
+            <button
+              onClick={logout}
+              className="text-xs text-muted hover:text-rust transition font-mono"
+            >
+              {email} · Log out
+            </button>
+          )}
+        </div>
         <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">
           Your books
         </p>
@@ -86,16 +133,32 @@ export default function BooksPage() {
         ) : (
           <ul>
             {books.map((book) => (
-              <li key={book.id} className="ledger-row py-4 flex justify-between items-center">
-                <div>
-                  <p className="font-medium text-ink">{book.name}</p>
-                  <p className="font-mono text-xs text-muted mt-1">
-                    {book._count.members} member{book._count.members !== 1 ? "s" : ""}
-                  </p>
+              <li key={book.id} className="ledger-row py-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-medium text-ink">{book.name}</p>
+                    <p className="font-mono text-xs text-muted mt-1">
+                      {book._count.members} member{book._count.members !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <p className="font-mono text-sm text-muted">
+                      {book._count.transactions} entries
+                    </p>
+                    <button
+                      onClick={() => shareInvite(book.id)}
+                      disabled={invitingId === book.id}
+                      className="text-xs text-ledger font-medium border border-ledger/30 rounded-md px-2 py-1 hover:bg-ledger-light transition disabled:opacity-50"
+                    >
+                      {invitingId === book.id ? "…" : "Invite"}
+                    </button>
+                  </div>
                 </div>
-                <p className="font-mono text-sm text-muted">
-                  {book._count.transactions} entries
-                </p>
+                {inviteLinks[book.id] && (
+                  <p className="font-mono text-xs text-ledger-dark bg-ledger-light rounded-md px-2 py-1.5 mt-2 break-all">
+                    Copied: {inviteLinks[book.id]}
+                  </p>
+                )}
               </li>
             ))}
           </ul>
