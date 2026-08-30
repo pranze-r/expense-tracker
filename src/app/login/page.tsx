@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -37,7 +37,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col justify-center px-8">
+    <>
       <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-2">
         Welcome back
       </p>
@@ -82,6 +82,16 @@ export default function LoginPage() {
           Sign up
         </Link>
       </p>
+    </>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <main className="min-h-screen flex flex-col justify-center px-8">
+      <Suspense fallback={<p className="text-sm text-muted">Loading…</p>}>
+        <LoginForm />
+      </Suspense>
     </main>
   );
 }
