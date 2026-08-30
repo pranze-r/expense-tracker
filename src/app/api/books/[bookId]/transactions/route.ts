@@ -5,75 +5,51 @@ import { createClient } from "@/lib/supabase/server";
 type RouteParams = { params: Promise<{ bookId: string }> };
 
 async function requireMembership(userId: string, bookId: string) {
-  return prisma.bookMember.findUnique({
-    where: { bookId_userId: { bookId, userId } },
-  });
+  return prisma.bookMember.findUnique({ where: { bookId_userId: { bookId, userId } } });
 }
 
-// GET /api/books/:bookId/transactions
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   const { bookId } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   const membership = await requireMembership(user.id, bookId);
-  if (!membership) {
-    return NextResponse.json({ error: "Not a member of this book" }, { status: 403 });
-  }
+  if (!membership) return NextResponse.json({ error: "Not a member of this book" }, { status: 403 });
 
   const transactions = await prisma.transaction.findMany({
-    where: { bookId },
-    orderBy: { date: "desc" },
-    include: { category: true },
+    where: { bookId }, orderBy: { date: "desc" }, include: { category: true },
   });
   return NextResponse.json(transactions);
 }
 
-// POST /api/books/:bookId/transactions
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const { bookId } = await params;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   const membership = await requireMembership(user.id, bookId);
   if (!membership || membership.role === "VIEWER") {
-    return NextResponse.json(
-      { error: "You don't have permission to add transactions to this book" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "You don't have permission to add transactions to this book" }, { status: 403 });
   }
 
   const body = await req.json();
-
   if (typeof body?.amount !== "number") {
-    return NextResponse.json(
-      { error: "amount (number) is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "amount (number) is required" }, { status: 400 });
   }
 
-  const transaction = await prisma.transaction.create({
-    data: {
-      amount: body.amount,
-      note: body.note ?? null,
-      date: body.date ? new Date(body.date) : new Date(),
-      bookId,
-      categoryId: body.categoryId ?? null,
-      createdByUserId: user.id,
-    },
-  });
+  const data = {
+    amount: body.amount, note: body.note ?? null,
+    date: body.date ? new Date(body.date) : new Date(),
+    bookId, categoryId: body.categoryId ?? null, createdByUserId: user.id,
+  };
+
+  const transaction = body.id
+    ? await prisma.transaction.upsert({
+        where: { id: body.id }, update: {}, create: { id: body.id, ...data }, include: { category: true },
+      })
+    : await prisma.transaction.create({ data, include: { category: true } });
 
   return NextResponse.json(transaction, { status: 201 });
 }

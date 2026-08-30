@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, Inter, IBM_Plex_Mono } from "next/font/google";
+import SyncProvider from "@/components/SyncProvider";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -23,13 +24,20 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Expense Tracker",
-  description: "Track expenses across multiple shared books",
+  description: "Track expenses across multiple shared books, even offline.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Ledger",
+  },
 };
 
-export const viewport = {
+export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  themeColor: "#1F6F54",
 };
 
 export default function RootLayout({
@@ -43,7 +51,7 @@ export default function RootLayout({
         className={`${fraunces.variable} ${inter.variable} ${plexMono.variable} font-body bg-line min-h-screen antialiased`}
       >
         <div className="max-w-md mx-auto min-h-screen bg-paper text-ink shadow-sm">
-          {children}
+          <SyncProvider>{children}</SyncProvider>
         </div>
       </body>
     </html>
