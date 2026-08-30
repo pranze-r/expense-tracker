@@ -16,13 +16,23 @@ export default function BooksPage() {
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [invitingId, setInvitingId] = useState<string | null>(null);
 
-  const books = useLiveQuery(() => db?.books.orderBy("updatedAt").reverse().toArray() ?? [], []);
+  const books = useLiveQuery(
+    () => db?.books.orderBy("updatedAt").reverse().toArray() ?? [],
+    []
+  );
+  const [initialSyncDone, setInitialSyncDone] = useState(false);
 
   useEffect(() => {
+    // Confirms there's actually a session — if not, the API will 401 and
+    // we bounce to /login. Local data still renders in the meantime.
     fetch("/api/books").then((res) => {
       if (res.status === 401) router.push("/login");
     });
-    pullBooks();
+    // Wait for this to settle (success OR failure, e.g. offline) before
+    // trusting an empty local result — otherwise "no books yet" flashes
+    // for a moment on every load, right before the real data arrives.
+    pullBooks().finally(() => setInitialSyncDone(true));
+
     const supabase = createClient();
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
   }, [router]);
@@ -39,7 +49,8 @@ export default function BooksPage() {
   async function shareInvite(bookId: string) {
     setInvitingId(bookId);
     const res = await fetch(`/api/books/${bookId}/invites`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role: "EDITOR" }),
     });
     setInvitingId(null);
@@ -56,7 +67,7 @@ export default function BooksPage() {
     router.refresh();
   }
 
-  const loading = books === undefined;
+  const loading = books === undefined || !initialSyncDone;
 
   return (
     <main className="min-h-dvh flex flex-col">
@@ -77,11 +88,16 @@ export default function BooksPage() {
 
       <form onSubmit={createBook} className="px-6 pb-6 flex gap-2">
         <input
-          value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Trip to Goa"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="e.g. Trip to Goa"
           className="flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
         />
-        <button type="submit" disabled={creating}
-          className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition">
+        <button
+          type="submit"
+          disabled={creating}
+          className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition"
+        >
           {creating ? "Adding…" : "Add"}
         </button>
       </form>
@@ -110,8 +126,11 @@ export default function BooksPage() {
                   </Link>
                   <div className="flex items-center gap-3">
                     <p className="font-mono text-sm text-muted">{book.transactionCount} entries</p>
-                    <button onClick={() => shareInvite(book.id)} disabled={invitingId === book.id}
-                      className="text-xs text-ledger font-medium border border-ledger/30 rounded-md px-2 py-1 hover:bg-ledger-light transition disabled:opacity-50">
+                    <button
+                      onClick={() => shareInvite(book.id)}
+                      disabled={invitingId === book.id}
+                      className="text-xs text-ledger font-medium border border-ledger/30 rounded-md px-2 py-1 hover:bg-ledger-light transition disabled:opacity-50"
+                    >
                       {invitingId === book.id ? "…" : "Invite"}
                     </button>
                   </div>
@@ -131,7 +150,9 @@ export default function BooksPage() {
 }
 
 function SyncDot({ status }: { status: "synced" | "pending" | "error" }) {
-  const color = status === "synced" ? "bg-ledger" : status === "pending" ? "bg-amber-500" : "bg-rust";
-  const title = status === "synced" ? "Synced" : status === "pending" ? "Waiting to sync" : "Sync failed";
+  const color =
+    status === "synced" ? "bg-ledger" : status === "pending" ? "bg-amber-500" : "bg-rust";
+  const title =
+    status === "synced" ? "Synced" : status === "pending" ? "Waiting to sync" : "Sync failed";
   return <span className={`inline-block w-1.5 h-1.5 rounded-full ${color}`} title={title} />;
 }

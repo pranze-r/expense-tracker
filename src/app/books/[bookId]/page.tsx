@@ -9,18 +9,25 @@ import { createTransactionLocal, pullTransactions } from "@/lib/sync";
 
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
+
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [adding, setAdding] = useState(false);
 
   const book = useLiveQuery(() => db?.books.get(bookId), [bookId]);
   const transactions = useLiveQuery(
-    () => db?.transactions.where("bookId").equals(bookId).reverse().sortBy("date") ?? [],
+    () =>
+      db?.transactions
+        .where("bookId")
+        .equals(bookId)
+        .reverse()
+        .sortBy("date") ?? [],
     [bookId]
   );
+  const [initialSyncDone, setInitialSyncDone] = useState(false);
 
   useEffect(() => {
-    pullTransactions(bookId);
+    pullTransactions(bookId).finally(() => setInitialSyncDone(true));
   }, [bookId]);
 
   async function addTransaction(e: React.FormEvent) {
@@ -30,15 +37,17 @@ export default function BookDetailPage() {
 
     setAdding(true);
     await createTransactionLocal(bookId, {
-      amount: parsed, note: note.trim() || null,
-      date: new Date().toISOString(), categoryId: null,
+      amount: parsed,
+      note: note.trim() || null,
+      date: new Date().toISOString(),
+      categoryId: null,
     });
     setAmount("");
     setNote("");
     setAdding(false);
   }
 
-  const loading = transactions === undefined;
+  const loading = transactions === undefined || !initialSyncDone;
   const total = (transactions ?? []).reduce((sum, t) => sum + t.amount, 0);
 
   return (
@@ -59,19 +68,27 @@ export default function BookDetailPage() {
       <form onSubmit={addTransaction} className="px-6 pb-6 flex flex-col gap-2">
         <div className="flex gap-2">
           <input
-            type="number" inputMode="decimal" step="0.01" required
-            value={amount} onChange={(e) => setAmount(e.target.value)}
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            required
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
             placeholder="Amount"
             className="w-28 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
           />
           <input
-            value={note} onChange={(e) => setNote(e.target.value)}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
             placeholder="What was it for?"
             className="flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
           />
         </div>
-        <button type="submit" disabled={adding}
-          className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition">
+        <button
+          type="submit"
+          disabled={adding}
+          className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition"
+        >
           {adding ? "Adding…" : "Add expense"}
         </button>
       </form>
@@ -108,7 +125,9 @@ export default function BookDetailPage() {
 }
 
 function SyncDot({ status }: { status: "synced" | "pending" | "error" }) {
-  const color = status === "synced" ? "bg-ledger" : status === "pending" ? "bg-amber-500" : "bg-rust";
-  const title = status === "synced" ? "Synced" : status === "pending" ? "Waiting to sync" : "Sync failed";
+  const color =
+    status === "synced" ? "bg-ledger" : status === "pending" ? "bg-amber-500" : "bg-rust";
+  const title =
+    status === "synced" ? "Synced" : status === "pending" ? "Waiting to sync" : "Sync failed";
   return <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${color}`} title={title} />;
 }
