@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
-import { createTransactionLocal, pullTransactions } from "@/lib/sync";
+import { createTransactionLocal, editTransactionLocal, deleteTransactionLocal, pullTransactions } from "@/lib/sync";
 
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -25,6 +25,9 @@ export default function BookDetailPage() {
     [bookId]
   );
   const [initialSyncDone, setInitialSyncDone] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editNote, setEditNote] = useState("");
 
   useEffect(() => {
     pullTransactions(bookId).finally(() => setInitialSyncDone(true));
@@ -45,6 +48,24 @@ export default function BookDetailPage() {
     setAmount("");
     setNote("");
     setAdding(false);
+  }
+
+  function startEditing(t: { id: string; amount: number; note: string | null }) {
+    setEditingId(t.id);
+    setEditAmount(String(t.amount));
+    setEditNote(t.note ?? "");
+  }
+
+  async function saveEdit(id: string) {
+    const parsed = parseFloat(editAmount);
+    if (isNaN(parsed) || parsed <= 0) return;
+    await editTransactionLocal(bookId, id, { amount: parsed, note: editNote.trim() || null });
+    setEditingId(null);
+  }
+
+  async function removeTransaction(id: string) {
+    setEditingId(null);
+    await deleteTransactionLocal(bookId, id);
   }
 
   const loading = transactions === undefined || !initialSyncDone;
@@ -103,20 +124,65 @@ export default function BookDetailPage() {
           </div>
         ) : (
           <ul>
-            {transactions.map((t) => (
-              <li key={t.id} className="ledger-row py-3 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <SyncDot status={t.syncStatus} />
-                  <div>
-                    <p className="text-ink text-sm">{t.note || "Untitled"}</p>
-                    <p className="font-mono text-xs text-muted mt-0.5">
-                      {new Date(t.date).toLocaleDateString()}
-                    </p>
+            {transactions.map((t) =>
+              editingId === t.id ? (
+                <li key={t.id} className="ledger-row py-3">
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      value={editAmount}
+                      onChange={(e) => setEditAmount(e.target.value)}
+                      className="w-24 border border-line bg-white rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                    />
+                    <input
+                      value={editNote}
+                      onChange={(e) => setEditNote(e.target.value)}
+                      placeholder="What was it for?"
+                      className="flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                    />
                   </div>
-                </div>
-                <p className="font-mono text-sm text-ink">₹{t.amount.toFixed(2)}</p>
-              </li>
-            ))}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveEdit(t.id)}
+                      className="bg-ledger text-paper text-xs font-medium px-3 py-1.5 rounded-md active:scale-95 transition"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="text-xs text-muted px-3 py-1.5 rounded-md hover:text-ink transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => removeTransaction(t.id)}
+                      className="text-xs text-rust px-3 py-1.5 rounded-md ml-auto hover:bg-rust/10 transition"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ) : (
+                <li
+                  key={t.id}
+                  onClick={() => startEditing(t)}
+                  className="ledger-row py-3 flex justify-between items-center cursor-pointer active:bg-ledger-light/40 transition"
+                >
+                  <div className="flex items-center gap-2">
+                    <SyncDot status={t.syncStatus} />
+                    <div>
+                      <p className="text-ink text-sm">{t.note || "Untitled"}</p>
+                      <p className="font-mono text-xs text-muted mt-0.5">
+                        {new Date(t.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="font-mono text-sm text-ink">₹{t.amount.toFixed(2)}</p>
+                </li>
+              )
+            )}
           </ul>
         )}
       </div>

@@ -31,6 +31,7 @@ export interface OutboxItem {
   id?: number;
   entity: "book" | "transaction";
   entityId: string;
+  method: "POST" | "PATCH" | "DELETE";
   url: string;
   payload: unknown;
   createdAt: string;
