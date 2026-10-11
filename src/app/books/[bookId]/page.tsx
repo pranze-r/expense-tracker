@@ -4,14 +4,25 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/db";
-import { createTransactionLocal, editTransactionLocal, deleteTransactionLocal, pullTransactions } from "@/lib/sync";
+import { db, type TransactionType } from "@/lib/db";
+import {
+  createTransactionLocal,
+  editTransactionLocal,
+  deleteTransactionLocal,
+  pullTransactions,
+} from "@/lib/sync";
+
+// 1,23,456.50 — Indian digit grouping, always two decimals
+function formatMoney(n: number) {
+  return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
 
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [type, setType] = useState<TransactionType>("DEBIT");
   const [adding, setAdding] = useState(false);
 
   const book = useLiveQuery(() => db?.books.get(bookId), [bookId]);
@@ -28,6 +39,7 @@ export default function BookDetailPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editAmount, setEditAmount] = useState("");
   const [editNote, setEditNote] = useState("");
+  const [editType, setEditType] = useState<TransactionType>("DEBIT");
 
   useEffect(() => {
     pullTransactions(bookId).finally(() => setInitialSyncDone(true));
@@ -41,6 +53,7 @@ export default function BookDetailPage() {
     setAdding(true);
     await createTransactionLocal(bookId, {
       amount: parsed,
+      type,
       note: note.trim() || null,
       date: new Date().toISOString(),
       categoryId: null,
@@ -48,18 +61,24 @@ export default function BookDetailPage() {
     setAmount("");
     setNote("");
     setAdding(false);
+    // `type` stays as chosen — logging several debits in a row is common
   }
 
-  function startEditing(t: { id: string; amount: number; note: string | null }) {
+  function startEditing(t: { id: string; amount: number; note: string | null; type: TransactionType }) {
     setEditingId(t.id);
     setEditAmount(String(t.amount));
     setEditNote(t.note ?? "");
+    setEditType(t.type === "CREDIT" ? "CREDIT" : "DEBIT");
   }
 
   async function saveEdit(id: string) {
     const parsed = parseFloat(editAmount);
     if (isNaN(parsed) || parsed <= 0) return;
-    await editTransactionLocal(bookId, id, { amount: parsed, note: editNote.trim() || null });
+    await editTransactionLocal(bookId, id, {
+      amount: parsed,
+      type: editType,
+      note: editNote.trim() || null,
+    });
     setEditingId(null);
   }
 
@@ -69,7 +88,13 @@ export default function BookDetailPage() {
   }
 
   const loading = transactions === undefined || !initialSyncDone;
-  const total = (transactions ?? []).reduce((sum, t) => sum + t.amount, 0);
+
+  const list = transactions ?? [];
+  // Entries saved before debit/credit existed have no type — those were
+  // all expenses, so anything that isn't an explicit CREDIT counts as out.
+  const totalIn = list.filter((t) => t.type === "CREDIT").reduce((sum, t) => sum + t.amount, 0);
+  const totalOut = list.filter((t) => t.type !== "CREDIT").reduce((sum, t) => sum + t.amount, 0);
+  const balance = totalIn - totalOut;
 
   return (
     <main className="min-h-dvh flex flex-col">
@@ -80,13 +105,24 @@ export default function BookDetailPage() {
         <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">
           {book ? "Book" : "Loading…"}
         </p>
-        <h1 className="font-display text-3xl text-ink mb-2">{book?.name ?? "…"}</h1>
-        <p className="font-mono text-sm text-muted">
-          Total: <span className="text-ink">₹{total.toFixed(2)}</span>
+        <h1 className="font-display text-3xl text-ink mb-4">{book?.name ?? "…"}</h1>
+
+        <p className="font-mono text-xs uppercase tracking-[0.15em] text-muted mb-1">Balance</p>
+        <p className={`font-mono text-3xl mb-3 ${balance < 0 ? "text-rust" : "text-ink"}`}>
+          {balance < 0 ? "−" : ""}₹{formatMoney(Math.abs(balance))}
         </p>
+        <div className="flex gap-6 font-mono text-sm">
+          <p className="text-muted">
+            In <span className="text-ledger">+₹{formatMoney(totalIn)}</span>
+          </p>
+          <p className="text-muted">
+            Out <span className="text-rust">−₹{formatMoney(totalOut)}</span>
+          </p>
+        </div>
       </header>
 
       <form onSubmit={addTransaction} className="px-6 pb-6 flex flex-col gap-2">
+        <TypeToggle value={type} onChange={setType} />
         <div className="flex gap-2">
           <input
             type="number"
@@ -96,21 +132,23 @@ export default function BookDetailPage() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="Amount"
-            className="w-28 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+            className="w-28 shrink-0 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
           />
           <input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="What was it for?"
-            className="flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+            placeholder={type === "DEBIT" ? "What was it for?" : "Where did it come from?"}
+            className="min-w-0 flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
           />
         </div>
         <button
           type="submit"
           disabled={adding}
-          className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition"
+          className={`${
+            type === "DEBIT" ? "bg-rust" : "bg-ledger"
+          } text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition`}
         >
-          {adding ? "Adding…" : "Add expense"}
+          {adding ? "Adding…" : type === "DEBIT" ? "Add debit (money out)" : "Add credit (money in)"}
         </button>
       </form>
 
@@ -120,13 +158,16 @@ export default function BookDetailPage() {
         ) : transactions.length === 0 ? (
           <div className="border border-dashed border-line rounded-xl p-8 text-center">
             <p className="text-ink font-medium mb-1">No entries yet</p>
-            <p className="text-muted text-sm">Add your first expense above.</p>
+            <p className="text-muted text-sm">Add your first debit or credit above.</p>
           </div>
         ) : (
           <ul>
             {transactions.map((t) =>
               editingId === t.id ? (
                 <li key={t.id} className="ledger-row py-3">
+                  <div className="mb-2">
+                    <TypeToggle value={editType} onChange={setEditType} compact />
+                  </div>
                   <div className="flex gap-2 mb-2">
                     <input
                       type="number"
@@ -134,13 +175,13 @@ export default function BookDetailPage() {
                       step="0.01"
                       value={editAmount}
                       onChange={(e) => setEditAmount(e.target.value)}
-                      className="w-24 border border-line bg-white rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                      className="w-24 shrink-0 border border-line bg-white rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
                     />
                     <input
                       value={editNote}
                       onChange={(e) => setEditNote(e.target.value)}
-                      placeholder="What was it for?"
-                      className="flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                      placeholder="Note"
+                      className="min-w-0 flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
                     />
                   </div>
                   <div className="flex gap-2">
@@ -179,7 +220,9 @@ export default function BookDetailPage() {
                       </p>
                     </div>
                   </div>
-                  <p className="font-mono text-sm text-ink">₹{t.amount.toFixed(2)}</p>
+                  <p className={`font-mono text-sm ${t.type === "CREDIT" ? "text-ledger" : "text-rust"}`}>
+                    {t.type === "CREDIT" ? "+" : "−"}₹{formatMoney(t.amount)}
+                  </p>
                 </li>
               )
             )}
@@ -187,6 +230,44 @@ export default function BookDetailPage() {
         )}
       </div>
     </main>
+  );
+}
+
+function TypeToggle({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: TransactionType;
+  onChange: (v: TransactionType) => void;
+  compact?: boolean;
+}) {
+  // Two separate buttons with a gap between them (not segments packed
+  // inside one tinted box), so they can never sit on top of each other.
+  const option = (kind: TransactionType, sign: string, label: string, hint: string, activeClass: string) => {
+    const active = value === kind;
+    return (
+      <button
+        type="button"
+        aria-pressed={active}
+        onClick={() => onChange(kind)}
+        className={`min-w-0 flex-1 rounded-lg border-2 text-center font-medium transition ${
+          compact ? "px-2 py-1.5 text-xs" : "px-3 py-2.5 text-sm"
+        } ${active ? activeClass : "border-line bg-white text-muted"}`}
+      >
+        <span className="block whitespace-nowrap">
+          {sign} {label}
+        </span>
+        {!compact && <span className="block whitespace-nowrap text-xs font-normal">{hint}</span>}
+      </button>
+    );
+  };
+
+  return (
+    <div role="group" aria-label="Entry type" className="flex gap-2">
+      {option("DEBIT", "−", "Debit", "money out", "border-rust bg-rust text-paper")}
+      {option("CREDIT", "+", "Credit", "money in", "border-ledger bg-ledger text-paper")}
+    </div>
   );
 }
 

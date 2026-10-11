@@ -14,40 +14,38 @@ async function requireEditAccess(userId: string, bookId: string) {
 // PATCH /api/books/:bookId/transactions/:transactionId
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   const { bookId, transactionId } = await params;
-  if (!bookId || !transactionId) {
-  return NextResponse.json({ error: "Missing id" }, { status: 400 });
-}
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  // Prisma treats `id: undefined` as "no filter", which would turn this
+  // into an update of every row in the book. Refuse instead.
+  if (!bookId || !transactionId) {
+    return NextResponse.json({ error: "Missing id" }, { status: 400 });
   }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+
   if (!(await requireEditAccess(user.id, bookId))) {
-    return NextResponse.json(
-      { error: "You don't have permission to edit transactions in this book" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "You don't have permission to edit transactions in this book" }, { status: 403 });
   }
 
   const body = await req.json();
-  const data: { amount?: number; note?: string | null; categoryId?: string | null } = {};
+  const data: {
+    amount?: number;
+    type?: "DEBIT" | "CREDIT";
+    note?: string | null;
+    categoryId?: string | null;
+  } = {};
   if (typeof body.amount === "number") data.amount = body.amount;
+  if (body.type === "DEBIT" || body.type === "CREDIT") data.type = body.type;
   if ("note" in body) data.note = body.note;
   if ("categoryId" in body) data.categoryId = body.categoryId;
 
-  // Scope the update to this book too, not just the id — a member of one
-  // book shouldn't be able to edit a transaction that lives in another.
   const result = await prisma.transaction.updateMany({
     where: { id: transactionId, bookId },
     data,
   });
-
-  if (result.count === 0) {
-    return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
-  }
+  if (result.count === 0) return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
 
   const transaction = await prisma.transaction.findUnique({
     where: { id: transactionId },
@@ -59,31 +57,21 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 // DELETE /api/books/:bookId/transactions/:transactionId
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
   const { bookId, transactionId } = await params;
+
   if (!bookId || !transactionId) {
-  return NextResponse.json({ error: "Missing id" }, { status: 400 });
-}
+    return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  }
+
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
   if (!(await requireEditAccess(user.id, bookId))) {
-    return NextResponse.json(
-      { error: "You don't have permission to delete transactions in this book" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "You don't have permission to delete transactions in this book" }, { status: 403 });
   }
 
-  const result = await prisma.transaction.deleteMany({
-    where: { id: transactionId, bookId },
-  });
-
-  if (result.count === 0) {
-    return NextResponse.json({ ok: true });
-  }
-
+  // Already gone (e.g. deleted from another device) is fine — the end
+  // state the client wanted is achieved either way.
+  await prisma.transaction.deleteMany({ where: { id: transactionId, bookId } });
   return NextResponse.json({ ok: true });
 }

@@ -40,9 +40,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   }
 
   const data = {
-    amount: body.amount, note: body.note ?? null,
+    amount: body.amount,
+    // Anything other than an explicit CREDIT is stored as a DEBIT
+    type: (body.type === "CREDIT" ? "CREDIT" : "DEBIT") as "CREDIT" | "DEBIT",
+    note: body.note ?? null,
     date: body.date ? new Date(body.date) : new Date(),
-    bookId, categoryId: body.categoryId ?? null, createdByUserId: user.id,
+    bookId,
+    categoryId: body.categoryId ?? null,
+    createdByUserId: user.id,
   };
 
   const transaction = body.id

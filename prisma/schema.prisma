@@ -1,9 +1,3 @@
-// Phase 1 data model
-// Books can have multiple members (shared, with roles) so this supports
-// the multi-user requirement from the start.
-// updatedAt / createdAt on every record so later, when we add offline
-// sync, we have what we need for last-write-wins conflict resolution.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -20,16 +14,18 @@ enum Role {
   VIEWER
 }
 
-// id is NOT self-generated here — it's set to match the corresponding
-// row's id in Supabase's auth.users table (see the trigger in
-// supabase/setup.sql). This keeps "who is logged in" (Supabase Auth)
-// and "who owns what data" (this table) as the same identity.
+// DEBIT = money going out (an expense), CREDIT = money coming in
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
 model User {
-  id        String       @id
-  email     String       @unique
-  name      String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id          String       @id
+  email       String       @unique
+  name        String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   memberships BookMember[]
 }
 
@@ -44,61 +40,50 @@ model Book {
   invites      BookInvite[]
 }
 
-// A shareable join link/code for a book. Anyone with the token can
-// join the book (as the given role) once they're logged in.
 model BookInvite {
   id        String    @id @default(uuid())
   token     String    @unique @default(uuid())
   role      Role      @default(EDITOR)
   createdAt DateTime  @default(now())
   expiresAt DateTime?
-
-  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
-  bookId String
+  book      Book      @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  bookId    String
 }
 
-// Join table: who can access which book, and with what permission
 model BookMember {
   id       String   @id @default(uuid())
   role     Role     @default(EDITOR)
   joinedAt DateTime @default(now())
-
-  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
-  bookId String
-
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId String
+  book     Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  bookId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
 
   @@unique([bookId, userId])
 }
 
 model Category {
-  id     String @id @default(uuid())
-  name   String
-  color  String?
-
-  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
-  bookId String
-
+  id           String        @id @default(uuid())
+  name         String
+  color        String?
+  book         Book          @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  bookId       String
   transactions Transaction[]
 
   @@unique([bookId, name])
 }
 
 model Transaction {
-  id        String   @id @default(uuid())
-  amount    Float
-  note      String?
-  date      DateTime @default(now())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // who added it - useful once auth + shared books are live
+  id              String          @id @default(uuid())
+  amount          Float
+  type            TransactionType @default(DEBIT)
+  note            String?
+  date            DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   createdByUserId String?
-
-  book   Book   @relation(fields: [bookId], references: [id], onDelete: Cascade)
-  bookId String
-
-  category   Category? @relation(fields: [categoryId], references: [id])
-  categoryId String?
+  book            Book            @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  bookId          String
+  category        Category?       @relation(fields: [categoryId], references: [id])
+  categoryId      String?
 }

@@ -12,6 +12,7 @@ export default function BooksPage() {
   const router = useRouter();
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [showNewBook, setShowNewBook] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [invitingId, setInvitingId] = useState<string | null>(null);
@@ -37,13 +38,35 @@ export default function BooksPage() {
     supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
   }, [router]);
 
+  // While the popup is open: Escape closes it, and the page behind
+  // doesn't scroll underneath it.
+  useEffect(() => {
+    if (!showNewBook) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNewBook();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showNewBook]);
+
+  function closeNewBook() {
+    setShowNewBook(false);
+    setNewName("");
+  }
+
   async function createBook(e: React.FormEvent) {
     e.preventDefault();
-    if (!newName.trim()) return;
+    const name = newName.trim();
+    if (!name) return;
     setCreating(true);
-    await createBookLocal(newName.trim());
-    setNewName("");
+    await createBookLocal(name);
     setCreating(false);
+    closeNewBook();
   }
 
   async function shareInvite(bookId: string) {
@@ -71,7 +94,7 @@ export default function BooksPage() {
 
   return (
     <main className="min-h-dvh flex flex-col">
-      <header className="px-6 pt-6 pb-4">
+      <header className="px-6 pt-6 pb-6">
         <div className="flex items-center justify-between mb-4">
           <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition">
             <span className="font-mono">←</span> Home
@@ -82,25 +105,19 @@ export default function BooksPage() {
             </button>
           )}
         </div>
-        <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">Your books</p>
-        <h1 className="font-display text-3xl text-ink">My Books</h1>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">Your books</p>
+            <h1 className="font-display text-3xl text-ink">My Books</h1>
+          </div>
+          <button
+            onClick={() => setShowNewBook(true)}
+            className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium active:scale-95 transition flex-shrink-0"
+          >
+            + New book
+          </button>
+        </div>
       </header>
-
-      <form onSubmit={createBook} className="px-6 pb-6 flex gap-2">
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="e.g. Trip to Goa"
-          className="flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
-        />
-        <button
-          type="submit"
-          disabled={creating}
-          className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition"
-        >
-          {creating ? "Adding…" : "Add"}
-        </button>
-      </form>
 
       <div className="flex-1 px-6">
         {loading ? (
@@ -108,7 +125,13 @@ export default function BooksPage() {
         ) : books.length === 0 ? (
           <div className="border border-dashed border-line rounded-xl p-8 text-center">
             <p className="text-ink font-medium mb-1">No books yet</p>
-            <p className="text-muted text-sm">Add your first one above to start tracking.</p>
+            <p className="text-muted text-sm mb-4">Create your first book to start tracking.</p>
+            <button
+              onClick={() => setShowNewBook(true)}
+              className="bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium active:scale-95 transition"
+            >
+              + New book
+            </button>
           </div>
         ) : (
           <ul>
@@ -145,6 +168,60 @@ export default function BooksPage() {
           </ul>
         )}
       </div>
+
+      {showNewBook && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 pb-[12dvh]"
+          onClick={closeNewBook}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-book-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-white border border-line rounded-2xl p-6 shadow-2xl"
+          >
+            <h2 id="new-book-title" className="font-display text-2xl text-ink mb-1">
+              New book
+            </h2>
+            <p className="text-sm text-muted mb-5">
+              Give it a name — a trip, a household, a project.
+            </p>
+
+            <form onSubmit={createBook}>
+              <label htmlFor="book-name" className="text-sm text-muted block mb-1">
+                Book name
+              </label>
+              <input
+                id="book-name"
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="e.g. Trip to Goa"
+                maxLength={60}
+                className="w-full border border-line bg-paper rounded-lg px-3 py-2.5 text-base text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+              />
+
+              <div className="flex gap-2 mt-5">
+                <button
+                  type="button"
+                  onClick={closeNewBook}
+                  className="flex-1 border border-line bg-white text-ink px-4 py-2.5 rounded-lg text-sm font-medium active:scale-95 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating || !newName.trim()}
+                  className="flex-1 bg-ledger text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition"
+                >
+                  {creating ? "Creating…" : "Create book"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

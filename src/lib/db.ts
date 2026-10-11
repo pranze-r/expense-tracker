@@ -1,6 +1,7 @@
 import Dexie, { type Table } from "dexie";
 
 export type SyncStatus = "synced" | "pending" | "error";
+export type TransactionType = "DEBIT" | "CREDIT";
 
 export interface LocalBook {
   id: string;
@@ -17,6 +18,10 @@ export interface LocalTransaction {
   id: string;
   bookId: string;
   amount: number;
+  // DEBIT = money out, CREDIT = money in. Entries saved before this field
+  // existed have no value here — the UI treats anything that isn't CREDIT
+  // as a debit, which matches how they were originally entered (expenses).
+  type: TransactionType;
   note: string | null;
   date: string;
   categoryId: string | null;
