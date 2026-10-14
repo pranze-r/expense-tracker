@@ -1,16 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type TransactionType } from "@/lib/db";
 import {
+  addStarterCategories,
+  createCategoryLocal,
   createTransactionLocal,
   editTransactionLocal,
   deleteTransactionLocal,
+  pullBooks,
+  pullCategories,
   pullTransactions,
 } from "@/lib/sync";
+import BookOptionsDialog from "@/components/BookOptionsDialog";
+import CategoryPicker from "@/components/CategoryPicker";
+import CategoriesDialog from "@/components/CategoriesDialog";
 
 // 1,23,456.50 — Indian digit grouping, always two decimals
 function formatMoney(n: number) {
@@ -19,13 +26,20 @@ function formatMoney(n: number) {
 
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
+  const router = useRouter();
+  const [showOptions, setShowOptions] = useState(false);
+  const closeOptions = useCallback(() => setShowOptions(false), []);
+  const [showCategories, setShowCategories] = useState(false);
+  const closeCategories = useCallback(() => setShowCategories(false), []);
 
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [type, setType] = useState<TransactionType>("DEBIT");
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
-  const book = useLiveQuery(() => db?.books.get(bookId), [bookId]);
+  // undefined = still loading, null = this book isn't here (deleted, or no access)
+  const book = useLiveQuery(async () => (await db?.books.get(bookId)) ?? null, [bookId]);
   const transactions = useLiveQuery(
     () =>
       db?.transactions
@@ -40,9 +54,28 @@ export default function BookDetailPage() {
   const [editAmount, setEditAmount] = useState("");
   const [editNote, setEditNote] = useState("");
   const [editType, setEditType] = useState<TransactionType>("DEBIT");
+  const [editCategoryId, setEditCategoryId] = useState<string | null>(null);
+
+  const categories = useLiveQuery(
+    async () =>
+      ((await db?.categories.where("bookId").equals(bookId).toArray()) ?? []).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      ),
+    [bookId]
+  );
+  const categoryList = categories ?? [];
+  const categoryNames = new Map(categoryList.map((c) => [c.id, c.name]));
+  // Viewers can see categories but not create or manage them
+  const canEditCategories = book?.myRole !== "VIEWER";
+  // A selected category may have been removed since it was picked
+  const stillExists = (id: string | null) => (id && categoryNames.has(id) ? id : null);
 
   useEffect(() => {
-    pullTransactions(bookId).finally(() => setInitialSyncDone(true));
+    // Pull the book itself too, so opening a book directly on a fresh device
+    // doesn't briefly look like the book is missing.
+    Promise.all([pullBooks(), pullCategories(bookId), pullTransactions(bookId)]).finally(() =>
+      setInitialSyncDone(true)
+    );
   }, [bookId]);
 
   async function addTransaction(e: React.FormEvent) {
@@ -56,16 +89,24 @@ export default function BookDetailPage() {
       type,
       note: note.trim() || null,
       date: new Date().toISOString(),
-      categoryId: null,
+      categoryId: stillExists(categoryId),
     });
     setAmount("");
     setNote("");
+    setCategoryId(null);
     setAdding(false);
     // `type` stays as chosen — logging several debits in a row is common
   }
 
-  function startEditing(t: { id: string; amount: number; note: string | null; type: TransactionType }) {
+  function startEditing(t: {
+    id: string;
+    amount: number;
+    note: string | null;
+    type: TransactionType;
+    categoryId: string | null;
+  }) {
     setEditingId(t.id);
+    setEditCategoryId(t.categoryId ?? null);
     setEditAmount(String(t.amount));
     setEditNote(t.note ?? "");
     setEditType(t.type === "CREDIT" ? "CREDIT" : "DEBIT");
@@ -78,6 +119,7 @@ export default function BookDetailPage() {
       amount: parsed,
       type: editType,
       note: editNote.trim() || null,
+      categoryId: stillExists(editCategoryId),
     });
     setEditingId(null);
   }
@@ -96,12 +138,37 @@ export default function BookDetailPage() {
   const totalOut = list.filter((t) => t.type !== "CREDIT").reduce((sum, t) => sum + t.amount, 0);
   const balance = totalIn - totalOut;
 
+  if (book === null && initialSyncDone) {
+    return (
+      <main className="min-h-dvh flex flex-col justify-center px-8 text-center">
+        <h1 className="font-display text-2xl text-ink mb-2">This book isn&rsquo;t here anymore</h1>
+        <p className="text-sm text-muted mb-6">
+          It may have been deleted, or you no longer have access to it.
+        </p>
+        <Link href="/books" className="text-ledger font-medium">
+          Back to my books
+        </Link>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-dvh flex flex-col">
       <header className="px-6 pt-6 pb-4">
-        <Link href="/books" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition mb-4">
-          <span className="font-mono">←</span> All books
-        </Link>
+        <div className="flex items-center justify-between mb-4">
+          <Link href="/books" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition">
+            <span className="font-mono">←</span> All books
+          </Link>
+          {book?.myRole === "OWNER" && (
+            <button
+              onClick={() => setShowOptions(true)}
+              aria-label="Book options"
+              className="w-8 h-8 flex items-center justify-center text-muted border border-line rounded-md hover:text-ink transition"
+            >
+              ⋯
+            </button>
+          )}
+        </div>
         <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">
           {book ? "Book" : "Loading…"}
         </p>
@@ -141,6 +208,15 @@ export default function BookDetailPage() {
             className="min-w-0 flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
           />
         </div>
+        <CategoryPicker
+          categories={categoryList}
+          value={stillExists(categoryId)}
+          onChange={setCategoryId}
+          onCreate={(name) => createCategoryLocal(bookId, name)}
+          onAddStarter={() => addStarterCategories(bookId)}
+          canEdit={canEditCategories}
+          onManage={() => setShowCategories(true)}
+        />
         <button
           type="submit"
           disabled={adding}
@@ -184,6 +260,18 @@ export default function BookDetailPage() {
                       className="min-w-0 flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
                     />
                   </div>
+                  <div className="mb-3">
+                    <CategoryPicker
+                      compact
+                      categories={categoryList}
+                      value={stillExists(editCategoryId)}
+                      onChange={setEditCategoryId}
+                      onCreate={(name) => createCategoryLocal(bookId, name)}
+                      onAddStarter={() => addStarterCategories(bookId)}
+                      canEdit={canEditCategories}
+                      onManage={() => setShowCategories(true)}
+                    />
+                  </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => saveEdit(t.id)}
@@ -211,16 +299,26 @@ export default function BookDetailPage() {
                   onClick={() => startEditing(t)}
                   className="ledger-row py-3 flex justify-between items-center cursor-pointer active:bg-ledger-light/40 transition"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <SyncDot status={t.syncStatus} />
-                    <div>
-                      <p className="text-ink text-sm">{t.note || "Untitled"}</p>
+                    <div className="min-w-0">
+                      <p className="text-ink text-sm break-words">{t.note || "Untitled"}</p>
                       <p className="font-mono text-xs text-muted mt-0.5">
                         {new Date(t.date).toLocaleDateString()}
+                        {t.categoryId && categoryNames.get(t.categoryId) && (
+                          <>
+                            {" · "}
+                            <span className="text-ink">{categoryNames.get(t.categoryId)}</span>
+                          </>
+                        )}
                       </p>
                     </div>
                   </div>
-                  <p className={`font-mono text-sm ${t.type === "CREDIT" ? "text-ledger" : "text-rust"}`}>
+                  <p
+                    className={`font-mono text-sm whitespace-nowrap flex-shrink-0 pl-3 ${
+                      t.type === "CREDIT" ? "text-ledger" : "text-rust"
+                    }`}
+                  >
                     {t.type === "CREDIT" ? "+" : "−"}₹{formatMoney(t.amount)}
                   </p>
                 </li>
@@ -229,6 +327,14 @@ export default function BookDetailPage() {
           </ul>
         )}
       </div>
+
+      {showCategories && (
+        <CategoriesDialog bookId={bookId} categories={categoryList} onClose={closeCategories} />
+      )}
+
+      {showOptions && book && (
+        <BookOptionsDialog book={book} onClose={closeOptions} onDeleted={() => router.push("/books")} />
+      )}
     </main>
   );
 }

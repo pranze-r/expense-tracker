@@ -39,6 +39,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "amount (number) is required" }, { status: 400 });
   }
 
+  // An entry can only use a category that belongs to this same book
+  if (body.categoryId) {
+    const category = await prisma.category.findFirst({ where: { id: body.categoryId, bookId } });
+    if (!category) {
+      return NextResponse.json({ error: "Category not found in this book" }, { status: 400 });
+    }
+  }
+
   const data = {
     amount: body.amount,
     // Anything other than an explicit CREDIT is stored as a DEBIT

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/lib/db";
 import { createBookLocal, pullBooks } from "@/lib/sync";
 import { createClient } from "@/lib/supabase/client";
+import BookOptionsDialog from "@/components/BookOptionsDialog";
 
 export default function BooksPage() {
   const router = useRouter();
@@ -16,12 +17,19 @@ export default function BooksPage() {
   const [email, setEmail] = useState<string | null>(null);
   const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const [invitingId, setInvitingId] = useState<string | null>(null);
+  const [optionsBookId, setOptionsBookId] = useState<string | null>(null);
 
   const books = useLiveQuery(
     () => db?.books.orderBy("updatedAt").reverse().toArray() ?? [],
     []
   );
   const [initialSyncDone, setInitialSyncDone] = useState(false);
+
+  // Looked up from the live list (not copied), so if the book disappears
+  // while the card is open — say, the owner deleted it elsewhere — the card
+  // closes by itself.
+  const optionsBook = books?.find((b) => b.id === optionsBookId);
+  const closeOptions = useCallback(() => setOptionsBookId(null), []);
 
   useEffect(() => {
     // Confirms there's actually a session — if not, the API will 401 and
@@ -138,17 +146,17 @@ export default function BooksPage() {
             {books.map((book) => (
               <li key={book.id} className="ledger-row py-4">
                 <div className="flex justify-between items-center">
-                  <Link href={`/books/${book.id}`} className="flex-1">
+                  <Link href={`/books/${book.id}`} className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium text-ink">{book.name}</p>
+                      <p className="font-medium text-ink truncate">{book.name}</p>
                       <SyncDot status={book.syncStatus} />
                     </div>
                     <p className="font-mono text-xs text-muted mt-1">
-                      {book.memberCount} member{book.memberCount !== 1 ? "s" : ""}
+                      {book.memberCount} member{book.memberCount !== 1 ? "s" : ""} · {book.transactionCount}{" "}
+                      {book.transactionCount === 1 ? "entry" : "entries"}
                     </p>
                   </Link>
-                  <div className="flex items-center gap-3">
-                    <p className="font-mono text-sm text-muted">{book.transactionCount} entries</p>
+                  <div className="flex items-center gap-3 flex-shrink-0 pl-3">
                     <button
                       onClick={() => shareInvite(book.id)}
                       disabled={invitingId === book.id}
@@ -156,6 +164,16 @@ export default function BooksPage() {
                     >
                       {invitingId === book.id ? "…" : "Invite"}
                     </button>
+                    {book.myRole === "OWNER" && (
+                      <button
+                        onClick={() => setOptionsBookId(book.id)}
+                        aria-label={`Options for ${book.name}`}
+                        className="w-8 h-8 flex items-center justify-center text-muted border border-line rounded-md hover:text-ink transition"
+                      >
+                        ⋯
+                      </button>
+                    )}
+                    {book.myRole !== "OWNER" && <span className="w-8 h-8" aria-hidden="true" />}
                   </div>
                 </div>
                 {inviteLinks[book.id] && (
@@ -168,6 +186,8 @@ export default function BooksPage() {
           </ul>
         )}
       </div>
+
+      {optionsBook && <BookOptionsDialog book={optionsBook} onClose={closeOptions} />}
 
       {showNewBook && (
         <div

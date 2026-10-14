@@ -41,6 +41,13 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
   if ("note" in body) data.note = body.note;
   if ("categoryId" in body) data.categoryId = body.categoryId;
 
+  if (typeof data.categoryId === "string") {
+    const category = await prisma.category.findFirst({ where: { id: data.categoryId, bookId } });
+    if (!category) {
+      return NextResponse.json({ error: "Category not found in this book" }, { status: 400 });
+    }
+  }
+
   const result = await prisma.transaction.updateMany({
     where: { id: transactionId, bookId },
     data,
