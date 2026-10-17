@@ -16,6 +16,7 @@ import {
   pullTransactions,
 } from "@/lib/sync";
 import BookOptionsDialog from "@/components/BookOptionsDialog";
+import MembersDialog from "@/components/MembersDialog";
 import CategoryPicker from "@/components/CategoryPicker";
 import CategoriesDialog from "@/components/CategoriesDialog";
 
@@ -29,6 +30,8 @@ export default function BookDetailPage() {
   const router = useRouter();
   const [showOptions, setShowOptions] = useState(false);
   const closeOptions = useCallback(() => setShowOptions(false), []);
+  const [showMembers, setShowMembers] = useState(false);
+  const closeMembers = useCallback(() => setShowMembers(false), []);
   const [showCategories, setShowCategories] = useState(false);
   const closeCategories = useCallback(() => setShowCategories(false), []);
 
@@ -67,6 +70,8 @@ export default function BookDetailPage() {
   const categoryNames = new Map(categoryList.map((c) => [c.id, c.name]));
   // Viewers can see categories but not create or manage them
   const canEditCategories = book?.myRole !== "VIEWER";
+  // Viewers can look at everything but not add or change entries
+  const canEditEntries = book?.myRole !== "VIEWER";
   // A selected category may have been removed since it was picked
   const stillExists = (id: string | null) => (id && categoryNames.has(id) ? id : null);
 
@@ -159,15 +164,25 @@ export default function BookDetailPage() {
           <Link href="/books" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink transition">
             <span className="font-mono">←</span> All books
           </Link>
-          {book?.myRole === "OWNER" && (
-            <button
-              onClick={() => setShowOptions(true)}
-              aria-label="Book options"
-              className="w-8 h-8 flex items-center justify-center text-muted border border-line rounded-md hover:text-ink transition"
-            >
-              ⋯
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {book && (
+              <button
+                onClick={() => setShowMembers(true)}
+                className="h-8 px-3 text-sm text-muted border border-line rounded-md hover:text-ink transition"
+              >
+                Members
+              </button>
+            )}
+            {book?.myRole === "OWNER" && (
+              <button
+                onClick={() => setShowOptions(true)}
+                aria-label="Book options"
+                className="w-8 h-8 flex items-center justify-center text-muted border border-line rounded-md hover:text-ink transition"
+              >
+                ⋯
+              </button>
+            )}
+          </div>
         </div>
         <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">
           {book ? "Book" : "Loading…"}
@@ -188,45 +203,51 @@ export default function BookDetailPage() {
         </div>
       </header>
 
-      <form onSubmit={addTransaction} className="px-6 pb-6 flex flex-col gap-2">
-        <TypeToggle value={type} onChange={setType} />
-        <div className="flex gap-2">
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            required
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Amount"
-            className="w-28 shrink-0 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+      {canEditEntries ? (
+        <form onSubmit={addTransaction} className="px-6 pb-6 flex flex-col gap-2">
+          <TypeToggle value={type} onChange={setType} />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Amount"
+              className="w-28 shrink-0 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+            />
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={type === "DEBIT" ? "What was it for?" : "Where did it come from?"}
+              className="min-w-0 flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+            />
+          </div>
+          <CategoryPicker
+            categories={categoryList}
+            value={stillExists(categoryId)}
+            onChange={setCategoryId}
+            onCreate={(name) => createCategoryLocal(bookId, name)}
+            onAddStarter={() => addStarterCategories(bookId)}
+            canEdit={canEditCategories}
+            onManage={() => setShowCategories(true)}
           />
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={type === "DEBIT" ? "What was it for?" : "Where did it come from?"}
-            className="min-w-0 flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
-          />
-        </div>
-        <CategoryPicker
-          categories={categoryList}
-          value={stillExists(categoryId)}
-          onChange={setCategoryId}
-          onCreate={(name) => createCategoryLocal(bookId, name)}
-          onAddStarter={() => addStarterCategories(bookId)}
-          canEdit={canEditCategories}
-          onManage={() => setShowCategories(true)}
-        />
-        <button
-          type="submit"
-          disabled={adding}
-          className={`${
-            type === "DEBIT" ? "bg-rust" : "bg-ledger"
-          } text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition`}
-        >
-          {adding ? "Adding…" : type === "DEBIT" ? "Add debit (money out)" : "Add credit (money in)"}
-        </button>
-      </form>
+          <button
+            type="submit"
+            disabled={adding}
+            className={`${
+              type === "DEBIT" ? "bg-rust" : "bg-ledger"
+            } text-paper px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 active:scale-95 transition`}
+          >
+            {adding ? "Adding…" : type === "DEBIT" ? "Add debit (money out)" : "Add credit (money in)"}
+          </button>
+        </form>
+      ) : (
+        <p className="mx-6 mb-6 rounded-lg bg-paper border border-line px-3 py-2.5 text-sm text-muted">
+          You have view-only access to this book.
+        </p>
+      )}
 
       <div className="flex-1 px-6 pb-8">
         {loading ? (
@@ -296,8 +317,10 @@ export default function BookDetailPage() {
               ) : (
                 <li
                   key={t.id}
-                  onClick={() => startEditing(t)}
-                  className="ledger-row py-3 flex justify-between items-center cursor-pointer active:bg-ledger-light/40 transition"
+                  onClick={canEditEntries ? () => startEditing(t) : undefined}
+                  className={`ledger-row py-3 flex justify-between items-center ${
+                    canEditEntries ? "cursor-pointer active:bg-ledger-light/40 transition" : ""
+                  }`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <SyncDot status={t.syncStatus} />
@@ -327,6 +350,10 @@ export default function BookDetailPage() {
           </ul>
         )}
       </div>
+
+      {showMembers && book && (
+        <MembersDialog book={book} onClose={closeMembers} onLeft={() => router.push("/books")} />
+      )}
 
       {showCategories && (
         <CategoriesDialog bookId={bookId} categories={categoryList} onClose={closeCategories} />

@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { createBookLocal, pullBooks } from "@/lib/sync";
 import { createClient } from "@/lib/supabase/client";
 import BookOptionsDialog from "@/components/BookOptionsDialog";
+import MembersDialog from "@/components/MembersDialog";
 
 export default function BooksPage() {
   const router = useRouter();
@@ -15,8 +16,6 @@ export default function BooksPage() {
   const [creating, setCreating] = useState(false);
   const [showNewBook, setShowNewBook] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
-  const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
-  const [invitingId, setInvitingId] = useState<string | null>(null);
   const [optionsBookId, setOptionsBookId] = useState<string | null>(null);
 
   const books = useLiveQuery(
@@ -30,6 +29,10 @@ export default function BooksPage() {
   // closes by itself.
   const optionsBook = books?.find((b) => b.id === optionsBookId);
   const closeOptions = useCallback(() => setOptionsBookId(null), []);
+
+  const [membersBookId, setMembersBookId] = useState<string | null>(null);
+  const membersBook = books?.find((b) => b.id === membersBookId);
+  const closeMembers = useCallback(() => setMembersBookId(null), []);
 
   useEffect(() => {
     // Confirms there's actually a session — if not, the API will 401 and
@@ -75,21 +78,6 @@ export default function BooksPage() {
     await createBookLocal(name);
     setCreating(false);
     closeNewBook();
-  }
-
-  async function shareInvite(bookId: string) {
-    setInvitingId(bookId);
-    const res = await fetch(`/api/books/${bookId}/invites`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ role: "EDITOR" }),
-    });
-    setInvitingId(null);
-    if (!res.ok) return;
-    const invite = await res.json();
-    const link = `${window.location.origin}/invite/${invite.token}`;
-    setInviteLinks((prev) => ({ ...prev, [bookId]: link }));
-    if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
   }
 
   async function logout() {
@@ -158,11 +146,11 @@ export default function BooksPage() {
                   </Link>
                   <div className="flex items-center gap-3 flex-shrink-0 pl-3">
                     <button
-                      onClick={() => shareInvite(book.id)}
-                      disabled={invitingId === book.id}
-                      className="text-xs text-ledger font-medium border border-ledger/30 rounded-md px-2 py-1 hover:bg-ledger-light transition disabled:opacity-50"
+                      onClick={() => setMembersBookId(book.id)}
+                      aria-label={`Members of ${book.name}`}
+                      className="text-xs text-ledger font-medium border border-ledger/30 rounded-md px-2 py-1 hover:bg-ledger-light transition"
                     >
-                      {invitingId === book.id ? "…" : "Invite"}
+                      Members
                     </button>
                     {book.myRole === "OWNER" && (
                       <button
@@ -176,11 +164,6 @@ export default function BooksPage() {
                     {book.myRole !== "OWNER" && <span className="w-8 h-8" aria-hidden="true" />}
                   </div>
                 </div>
-                {inviteLinks[book.id] && (
-                  <p className="font-mono text-xs text-ledger-dark bg-ledger-light rounded-md px-2 py-1.5 mt-2 break-all">
-                    Copied: {inviteLinks[book.id]}
-                  </p>
-                )}
               </li>
             ))}
           </ul>
@@ -188,6 +171,8 @@ export default function BooksPage() {
       </div>
 
       {optionsBook && <BookOptionsDialog book={optionsBook} onClose={closeOptions} />}
+
+      {membersBook && <MembersDialog book={membersBook} onClose={closeMembers} />}
 
       {showNewBook && (
         <div

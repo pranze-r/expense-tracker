@@ -133,6 +133,12 @@ export async function deleteBookLocal(id: string) {
   flushOutbox();
 }
 
+// You left the book (or were removed from it): wipe it from this device
+// without telling the server anything — the membership is already gone there.
+export async function forgetBookLocal(id: string) {
+  await purgeBookLocal(id);
+}
+
 export async function createTransactionLocal(
   bookId: string,
   input: {
@@ -570,29 +576,35 @@ export async function pullTransactions(bookId: string) {
 // Processes queued writes in the order they were created. One item's
 // failure doesn't block the rest — each is tried independently.
 
-let flushing = false;
+let flushing: Promise<void> | null = null;
 let flushAgain = false;
 
 // One pass at a time. If another is requested while one is running — say
 // you add an entry mid-sync — the running one goes round again when it
 // finishes, so the new item doesn't have to wait for the next 15-second tick.
-export async function flushOutbox() {
-  if (!db) return;
+//
+// The returned promise settles only when everything queued so far has been
+// attempted, so a caller that must not proceed until then (like leaving a
+// book) can simply await it.
+export function flushOutbox(): Promise<void> {
+  if (!db) return Promise.resolve();
   if (flushing) {
     flushAgain = true;
-    return;
+    return flushing;
   }
-  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  if (typeof navigator !== "undefined" && !navigator.onLine) return Promise.resolve();
 
-  flushing = true;
-  try {
-    do {
-      flushAgain = false;
-      await flushPass();
-    } while (flushAgain);
-  } finally {
-    flushing = false;
-  }
+  flushing = (async () => {
+    try {
+      do {
+        flushAgain = false;
+        await flushPass();
+      } while (flushAgain);
+    } finally {
+      flushing = null;
+    }
+  })();
+  return flushing;
 }
 
 async function flushPass() {
