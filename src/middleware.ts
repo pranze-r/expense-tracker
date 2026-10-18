@@ -15,9 +15,7 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet: CookieToSet[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
           response = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
@@ -33,8 +31,7 @@ export async function middleware(request: NextRequest) {
 
   const isProtectedPage = request.nextUrl.pathname.startsWith("/books");
   const isAuthPage =
-    request.nextUrl.pathname === "/login" ||
-    request.nextUrl.pathname === "/signup";
+    request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/signup";
 
   if (!user && isProtectedPage) {
     const redirectUrl = new URL("/login", request.url);
@@ -49,8 +46,14 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+// Runs on page loads only. Each run asks Supabase's login server who you
+// are — a network round trip — so it is skipped for:
+//  - /api/*: every API route checks the login itself (and refreshes an
+//    expired one), so running it here too just doubled the cost of each call;
+//  - the app's own files (service worker, manifest, icons, static assets),
+//    which need no login at all.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api/|_next/static|_next/image|favicon\\.ico|sw\\.js|manifest\\.json|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

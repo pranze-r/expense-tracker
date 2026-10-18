@@ -134,7 +134,10 @@ export default function BookDetailPage() {
     await deleteTransactionLocal(bookId, id);
   }
 
-  const loading = transactions === undefined || !initialSyncDone;
+  // Show the entries already stored on this phone straight away; "Loading…"
+  // is only for the first visit, when there's nothing stored yet.
+  const loading = transactions === undefined || (transactions.length === 0 && !initialSyncDone);
+  const updating = !initialSyncDone && (transactions?.length ?? 0) > 0;
 
   const list = transactions ?? [];
   // Entries saved before debit/credit existed have no type — those were
@@ -185,7 +188,7 @@ export default function BookDetailPage() {
           </div>
         </div>
         <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">
-          {book ? "Book" : "Loading…"}
+          {book ? (updating ? "Book · updating…" : "Book") : "Loading…"}
         </p>
         <h1 className="font-display text-3xl text-ink mb-4">{book?.name ?? "…"}</h1>
 

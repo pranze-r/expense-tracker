@@ -17,8 +17,21 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   const membership = await requireMembership(user.id, bookId);
   if (!membership) return NextResponse.json({ error: "Not a member of this book" }, { status: 403 });
 
+  // Only what the app uses — no join to the category table (the app shows
+  // category names from its own local list), and fewer fields per entry.
   const transactions = await prisma.transaction.findMany({
-    where: { bookId }, orderBy: { date: "desc" }, include: { category: true },
+    where: { bookId },
+    orderBy: { date: "desc" },
+    select: {
+      id: true,
+      amount: true,
+      type: true,
+      note: true,
+      date: true,
+      createdAt: true,
+      updatedAt: true,
+      categoryId: true,
+    },
   });
   return NextResponse.json(transactions);
 }

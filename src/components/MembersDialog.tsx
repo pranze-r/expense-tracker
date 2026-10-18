@@ -113,7 +113,7 @@ export default function MembersDialog({ book, onClose, onLeft }: Props) {
       return false;
     }
     setConfirm(null);
-    await Promise.all([load(), pullBooks()]);
+    await Promise.all([load(), pullBooks({ fresh: true })]);
     return true;
   }
 

@@ -2,6 +2,7 @@ import {
   db,
   type BookRole,
   type LocalBook,
+  type LocalCategory,
   type LocalTransaction,
   type OutboxItem,
   type TransactionType,
@@ -423,38 +424,103 @@ async function adoptExistingCategory(
   });
 }
 
-export async function pullCategories(bookId: string) {
-  if (!db) return;
+// ---------- Pulling: shared plumbing ----------
+
+export type PullResult = "ok" | "unauthorized" | "failed";
+
+const inFlight = new Map<string, Promise<PullResult>>();
+
+// Several parts of the app ask for the same data around the same moment
+// (app start, the page that opens, a second page). They share one request
+// instead of each making their own.
+//
+// `fresh` means "I just changed something — give me the server's current
+// answer": it won't reuse a request that was already on its way before the
+// change, it waits for that one and then asks again.
+function coalesce(key: string, run: () => Promise<PullResult>, fresh = false): Promise<PullResult> {
+  const running = inFlight.get(key);
+  if (running && !fresh) return running;
+
+  const start = (): Promise<PullResult> => {
+    const promise: Promise<PullResult> = run().finally(() => {
+      if (inFlight.get(key) === promise) inFlight.delete(key);
+    });
+    inFlight.set(key, promise);
+    return promise;
+  };
+  return running ? running.then(start, start) : start();
+}
+
+// A pull only writes the records that actually differ from what's stored.
+// Rewriting identical records would still make every screen refresh.
+const sameBook = (a: LocalBook, b: LocalBook) =>
+  a.name === b.name &&
+  a.createdAt === b.createdAt &&
+  a.updatedAt === b.updatedAt &&
+  a.memberCount === b.memberCount &&
+  a.transactionCount === b.transactionCount &&
+  a.myRole === b.myRole &&
+  a.syncStatus === b.syncStatus &&
+  a.syncError === b.syncError;
+
+const sameTransaction = (a: LocalTransaction, b: LocalTransaction) =>
+  a.amount === b.amount &&
+  a.type === b.type &&
+  a.note === b.note &&
+  a.date === b.date &&
+  a.categoryId === b.categoryId &&
+  a.createdAt === b.createdAt &&
+  a.updatedAt === b.updatedAt &&
+  a.syncStatus === b.syncStatus &&
+  a.syncError === b.syncError;
+
+export function pullCategories(bookId: string, options?: { fresh?: boolean }) {
+  return coalesce(`categories:${bookId}`, () => pullCategoriesNow(bookId), options?.fresh);
+}
+
+async function pullCategoriesNow(bookId: string): Promise<PullResult> {
+  if (!db) return "failed";
+  const store = db;
   try {
     // Same safety rule as books/entries: only categories already confirmed
     // on the server before this request are eligible for removal.
-    const syncedBefore = (await db.categories
+    const syncedBefore = (await store.categories
       .where("bookId")
       .equals(bookId)
       .filter((c) => c.syncStatus === "synced")
       .primaryKeys()) as string[];
 
     const res = await fetch(`/api/books/${bookId}/categories`);
-    if (!res.ok) return;
+    if (res.status === 401) return "unauthorized";
+    if (!res.ok) return "failed";
     const serverCategories: Array<{ id: string; name: string }> = await res.json();
 
-    for (const c of serverCategories) {
-      const local = await db.categories.get(c.id);
-      if (local && local.syncStatus === "pending") continue;
-      await db.categories.put({ id: c.id, bookId, name: c.name, syncStatus: "synced" });
-    }
+    await store.transaction("rw", store.categories, async () => {
+      const locals = await store.categories.bulkGet(serverCategories.map((c) => c.id));
+      const changed: LocalCategory[] = [];
+      serverCategories.forEach((c, i) => {
+        const local = locals[i];
+        if (local && local.syncStatus === "pending") return;
+        if (!local || local.name !== c.name || local.syncStatus !== "synced" || local.bookId !== bookId) {
+          changed.push({ id: c.id, bookId, name: c.name, syncStatus: "synced" });
+        }
+      });
+      if (changed.length > 0) await store.categories.bulkPut(changed);
+    });
 
     const serverIds = new Set(serverCategories.map((c) => c.id));
     for (const id of syncedBefore) {
       if (serverIds.has(id)) continue;
-      const local = await db.categories.get(id);
+      const local = await store.categories.get(id);
       if (local && local.syncStatus === "synced") {
         await detachCategoryLocal(id);
-        await db.categories.delete(id);
+        await store.categories.delete(id);
       }
     }
+    return "ok";
   } catch {
     // offline — the local copy stands
+    return "failed";
   }
 }
 
@@ -469,16 +535,22 @@ export async function pullCategories(bookId: string) {
 // started are eligible — a record that finishes syncing while we wait for
 // the answer can't be mistaken for a deleted one.
 
-export async function pullBooks() {
-  if (!db) return;
+export function pullBooks(options?: { fresh?: boolean }) {
+  return coalesce("books", pullBooksNow, options?.fresh);
+}
+
+async function pullBooksNow(): Promise<PullResult> {
+  if (!db) return "failed";
+  const store = db;
   try {
-    const syncedBefore = (await db.books
+    const syncedBefore = (await store.books
       .where("syncStatus")
       .equals("synced")
       .primaryKeys()) as string[];
 
     const res = await fetch("/api/books");
-    if (!res.ok) return;
+    if (res.status === 401) return "unauthorized";
+    if (!res.ok) return "failed";
     const serverBooks: Array<{
       id: string;
       name: string;
@@ -488,44 +560,58 @@ export async function pullBooks() {
       _count: { transactions: number; members: number };
     }> = await res.json();
 
-    for (const b of serverBooks) {
-      const local = await db.books.get(b.id);
-      if (local && local.syncStatus === "pending") continue;
-
-      await db.books.put({
-        id: b.id,
-        name: b.name,
-        createdAt: b.createdAt,
-        updatedAt: b.updatedAt,
-        memberCount: b._count.members,
-        transactionCount: b._count.transactions,
-        myRole: b.myRole ?? undefined,
-        syncStatus: "synced",
+    // One read and (at most) one write for the whole list, in one transaction
+    await store.transaction("rw", store.books, async () => {
+      const locals = await store.books.bulkGet(serverBooks.map((b) => b.id));
+      const changed: LocalBook[] = [];
+      serverBooks.forEach((b, i) => {
+        const local = locals[i];
+        if (local && local.syncStatus === "pending") return; // unsynced local changes win
+        const next: LocalBook = {
+          id: b.id,
+          name: b.name,
+          createdAt: b.createdAt,
+          updatedAt: b.updatedAt,
+          memberCount: b._count.members,
+          transactionCount: b._count.transactions,
+          myRole: b.myRole ?? undefined,
+          syncStatus: "synced",
+        };
+        if (!local || !sameBook(local, next)) changed.push(next);
       });
-    }
+      if (changed.length > 0) await store.books.bulkPut(changed);
+    });
 
     const serverIds = new Set(serverBooks.map((b) => b.id));
     for (const id of syncedBefore) {
       if (serverIds.has(id)) continue;
-      const local = await db.books.get(id);
+      const local = await store.books.get(id);
       if (local && local.syncStatus === "synced") await purgeBookLocal(id);
     }
+    return "ok";
   } catch {
     // offline — the local copy we already have is the best we can do
+    return "failed";
   }
 }
 
-export async function pullTransactions(bookId: string) {
-  if (!db) return;
+export function pullTransactions(bookId: string, options?: { fresh?: boolean }) {
+  return coalesce(`transactions:${bookId}`, () => pullTransactionsNow(bookId), options?.fresh);
+}
+
+async function pullTransactionsNow(bookId: string): Promise<PullResult> {
+  if (!db) return "failed";
+  const store = db;
   try {
-    const syncedBefore = (await db.transactions
+    const syncedBefore = (await store.transactions
       .where("bookId")
       .equals(bookId)
       .filter((t) => t.syncStatus === "synced")
       .primaryKeys()) as string[];
 
     const res = await fetch(`/api/books/${bookId}/transactions`);
-    if (!res.ok) return;
+    if (res.status === 401) return "unauthorized";
+    if (!res.ok) return "failed";
     const serverTx: Array<{
       id: string;
       amount: number;
@@ -535,40 +621,56 @@ export async function pullTransactions(bookId: string) {
       createdAt: string;
       updatedAt: string;
       categoryId: string | null;
-      category: { name: string } | null;
     }> = await res.json();
 
-    for (const t of serverTx) {
-      const local = await db.transactions.get(t.id);
-      if (local && local.syncStatus === "pending") continue;
-
-      await db.transactions.put({
-        id: t.id,
-        bookId,
-        amount: t.amount,
-        type: t.type ?? "DEBIT",
-        note: t.note,
-        date: t.date,
-        categoryId: t.categoryId ?? null,
-        categoryName: t.category?.name ?? null,
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
-        syncStatus: "synced",
+    // Everything below happens in ONE transaction: a single read of what we
+    // already have, one write of only what changed, and the removals. Doing
+    // this entry-by-entry took seconds for a book with a thousand entries,
+    // and refreshed the screen once per entry.
+    await store.transaction("rw", store.transactions, store.books, async () => {
+      const locals = await store.transactions.bulkGet(serverTx.map((t) => t.id));
+      const changed: LocalTransaction[] = [];
+      serverTx.forEach((t, i) => {
+        const local = locals[i];
+        if (local && local.syncStatus === "pending") return; // unsynced local changes win
+        const next: LocalTransaction = {
+          id: t.id,
+          bookId,
+          amount: t.amount,
+          type: t.type ?? "DEBIT",
+          note: t.note,
+          date: t.date,
+          categoryId: t.categoryId ?? null,
+          categoryName: null, // shown from the local categories list instead
+          createdAt: t.createdAt,
+          updatedAt: t.updatedAt,
+          syncStatus: "synced",
+        };
+        if (!local || !sameTransaction(local, next)) changed.push(next);
       });
-    }
+      if (changed.length > 0) await store.transactions.bulkPut(changed);
 
-    const serverIds = new Set(serverTx.map((t) => t.id));
-    for (const id of syncedBefore) {
-      if (serverIds.has(id)) continue;
-      const local = await db.transactions.get(id);
-      if (local && local.syncStatus === "synced") await db.transactions.delete(id);
-    }
+      // Entries deleted elsewhere (only ones already confirmed on the server
+      // before this request, as explained at the top of this section)
+      const serverIds = new Set(serverTx.map((t) => t.id));
+      const missing = syncedBefore.filter((id) => !serverIds.has(id));
+      if (missing.length > 0) {
+        const missingLocals = await store.transactions.bulkGet(missing);
+        const toDelete = missing.filter((_, i) => missingLocals[i]?.syncStatus === "synced");
+        if (toDelete.length > 0) await store.transactions.bulkDelete(toDelete);
+      }
 
-    // Keep the book's entry count honest after any removals
-    const count = await db.transactions.where("bookId").equals(bookId).count();
-    await db.books.update(bookId, { transactionCount: count });
+      // Keep the book's entry count honest — only write if it changed
+      const count = await store.transactions.where("bookId").equals(bookId).count();
+      const book = await store.books.get(bookId);
+      if (book && book.transactionCount !== count) {
+        await store.books.update(bookId, { transactionCount: count });
+      }
+    });
+    return "ok";
   } catch {
     // offline — fine, local data stands
+    return "failed";
   }
 }
 

@@ -35,18 +35,18 @@ export default function BooksPage() {
   const closeMembers = useCallback(() => setMembersBookId(null), []);
 
   useEffect(() => {
-    // Confirms there's actually a session — if not, the API will 401 and
-    // we bounce to /login. Local data still renders in the meantime.
-    fetch("/api/books").then((res) => {
-      if (res.status === 401) router.push("/login");
-    });
-    // Wait for this to settle (success OR failure, e.g. offline) before
-    // trusting an empty local result — otherwise "no books yet" flashes
-    // for a moment on every load, right before the real data arrives.
-    pullBooks().finally(() => setInitialSyncDone(true));
+    // One request, shared with the app's own start-up sync. Its answer also
+    // tells us if the login has expired, so no separate check is needed.
+    pullBooks()
+      .then((result) => {
+        if (result === "unauthorized") router.push("/login");
+      })
+      .finally(() => setInitialSyncDone(true));
 
+    // Only for showing your email: read the saved session from this device
+    // instead of asking the login server over the network.
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
+    supabase.auth.getSession().then(({ data }) => setEmail(data.session?.user?.email ?? null));
   }, [router]);
 
   // While the popup is open: Escape closes it, and the page behind
@@ -86,7 +86,10 @@ export default function BooksPage() {
     router.refresh();
   }
 
-  const loading = books === undefined || !initialSyncDone;
+  // Show what's already on this phone straight away. "Loading…" is only for
+  // the very first visit, when there's nothing stored yet to show.
+  const loading = books === undefined || (books.length === 0 && !initialSyncDone);
+  const updating = !initialSyncDone && !!books && books.length > 0;
 
   return (
     <main className="min-h-dvh flex flex-col">
@@ -103,7 +106,9 @@ export default function BooksPage() {
         </div>
         <div className="flex items-end justify-between gap-3">
           <div>
-            <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">Your books</p>
+            <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-1">
+              Your books{updating ? " · updating…" : ""}
+            </p>
             <h1 className="font-display text-3xl text-ink">My Books</h1>
           </div>
           <button
