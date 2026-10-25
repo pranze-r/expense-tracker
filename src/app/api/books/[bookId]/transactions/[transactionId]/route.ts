@@ -35,11 +35,19 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     type?: "DEBIT" | "CREDIT";
     note?: string | null;
     categoryId?: string | null;
+    date?: Date;
   } = {};
   if (typeof body.amount === "number") data.amount = body.amount;
   if (body.type === "DEBIT" || body.type === "CREDIT") data.type = body.type;
   if ("note" in body) data.note = body.note;
   if ("categoryId" in body) data.categoryId = body.categoryId;
+  if (typeof body.date === "string") {
+    const date = new Date(body.date);
+    if (isNaN(date.getTime())) {
+      return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+    }
+    data.date = date;
+  }
 
   if (typeof data.categoryId === "string") {
     const category = await prisma.category.findFirst({ where: { id: data.categoryId, bookId } });

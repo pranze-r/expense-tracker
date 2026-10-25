@@ -5,7 +5,7 @@ export default function Home() {
     <main className="ruled-page flex flex-col min-h-dvh">
       <div className="flex-1 flex flex-col justify-center px-8 py-10">
         <p className="font-mono text-xs tracking-[0.2em] uppercase text-muted mb-4">
-          No. 001 · Shared ledgers
+           · Shared Expense Tracker
         </p>
         <h1 className="font-display text-4xl sm:text-5xl leading-[1.05] text-ink mb-6">
           Every expense,

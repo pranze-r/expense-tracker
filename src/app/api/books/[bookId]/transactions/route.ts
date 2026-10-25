@@ -60,12 +60,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
   }
 
+  const date = body.date ? new Date(body.date) : new Date();
+  if (isNaN(date.getTime())) {
+    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
+
   const data = {
     amount: body.amount,
     // Anything other than an explicit CREDIT is stored as a DEBIT
     type: (body.type === "CREDIT" ? "CREDIT" : "DEBIT") as "CREDIT" | "DEBIT",
     note: body.note ?? null,
-    date: body.date ? new Date(body.date) : new Date(),
+    date,
     bookId,
     categoryId: body.categoryId ?? null,
     createdByUserId: user.id,

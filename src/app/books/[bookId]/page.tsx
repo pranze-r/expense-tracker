@@ -25,6 +25,20 @@ function formatMoney(n: number) {
   return n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// <input type="date"> works with local "YYYY-MM-DD" strings
+function toDateInput(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Picked day -> ISO timestamp. Today keeps the current time (so same-day
+// entries stay in the order they were added); other days are pinned to local
+// noon so timezone shifts can never move the entry to a neighbouring day.
+function dateInputToIso(value: string) {
+  if (!value || value === toDateInput(new Date())) return new Date().toISOString();
+  return new Date(`${value}T12:00:00`).toISOString();
+}
+
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const router = useRouter();
@@ -39,6 +53,7 @@ export default function BookDetailPage() {
   const [note, setNote] = useState("");
   const [type, setType] = useState<TransactionType>("DEBIT");
   const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [entryDate, setEntryDate] = useState(() => toDateInput(new Date()));
   const [adding, setAdding] = useState(false);
 
   // undefined = still loading, null = this book isn't here (deleted, or no access)
@@ -58,6 +73,8 @@ export default function BookDetailPage() {
   const [editNote, setEditNote] = useState("");
   const [editType, setEditType] = useState<TransactionType>("DEBIT");
   const [editCategoryId, setEditCategoryId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editOriginalDate, setEditOriginalDate] = useState("");
 
   const categories = useLiveQuery(
     async () =>
@@ -93,14 +110,15 @@ export default function BookDetailPage() {
       amount: parsed,
       type,
       note: note.trim() || null,
-      date: new Date().toISOString(),
+      date: dateInputToIso(entryDate),
       categoryId: stillExists(categoryId),
     });
     setAmount("");
     setNote("");
     setCategoryId(null);
     setAdding(false);
-    // `type` stays as chosen — logging several debits in a row is common
+    // `type` and the date stay as chosen — back-filling several entries for
+    // the same day (or logging several debits in a row) is common
   }
 
   function startEditing(t: {
@@ -109,8 +127,12 @@ export default function BookDetailPage() {
     note: string | null;
     type: TransactionType;
     categoryId: string | null;
+    date: string;
   }) {
     setEditingId(t.id);
+    const day = toDateInput(new Date(t.date));
+    setEditDate(day);
+    setEditOriginalDate(day);
     setEditCategoryId(t.categoryId ?? null);
     setEditAmount(String(t.amount));
     setEditNote(t.note ?? "");
@@ -125,6 +147,8 @@ export default function BookDetailPage() {
       type: editType,
       note: editNote.trim() || null,
       categoryId: stillExists(editCategoryId),
+      // Only touch the date if it was changed, so the entry keeps its time
+      ...(editDate && editDate !== editOriginalDate ? { date: dateInputToIso(editDate) } : {}),
     });
     setEditingId(null);
   }
@@ -227,6 +251,14 @@ export default function BookDetailPage() {
               className="min-w-0 flex-1 border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
             />
           </div>
+          <input
+            type="date"
+            required
+            aria-label="Date"
+            value={entryDate}
+            onChange={(e) => setEntryDate(e.target.value)}
+            className="w-full border border-line bg-white rounded-lg px-3 py-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+          />
           <CategoryPicker
             categories={categoryList}
             value={stillExists(categoryId)}
@@ -284,6 +316,13 @@ export default function BookDetailPage() {
                       className="min-w-0 flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
                     />
                   </div>
+                  <input
+                    type="date"
+                    aria-label="Date"
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="w-full mb-2 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                  />
                   <div className="mb-3">
                     <CategoryPicker
                       compact
@@ -330,7 +369,7 @@ export default function BookDetailPage() {
                     <div className="min-w-0">
                       <p className="text-ink text-sm break-words">{t.note || "Untitled"}</p>
                       <p className="font-mono text-xs text-muted mt-0.5">
-                        {new Date(t.date).toLocaleDateString()}
+                        {new Date(t.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                         {t.categoryId && categoryNames.get(t.categoryId) && (
                           <>
                             {" · "}

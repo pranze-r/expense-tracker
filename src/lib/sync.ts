@@ -195,6 +195,7 @@ export async function editTransactionLocal(
     type?: TransactionType;
     note?: string | null;
     categoryId?: string | null;
+    date?: string;
   }
 ) {
   if (!db) return;

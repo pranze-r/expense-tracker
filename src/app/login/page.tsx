@@ -65,6 +65,10 @@ function LoginForm() {
           />
         </div>
 
+        <Link href="/forgot-password" className="text-sm text-ledger font-medium self-end -mt-2">
+          Forgot password?
+        </Link>
+
         {error && <p className="text-sm text-rust">{error}</p>}
 
         <button
