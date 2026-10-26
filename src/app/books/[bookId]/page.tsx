@@ -39,6 +39,21 @@ function dateInputToIso(value: string) {
   return new Date(`${value}T12:00:00`).toISOString();
 }
 
+// "Today" / "Yesterday" / "Mon, 20 Oct 2026" for a day key like "2026-10-20"
+function dayLabel(key: string) {
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (key === toDateInput(today)) return "Today";
+  if (key === toDateInput(yesterday)) return "Yesterday";
+  return new Date(`${key}T12:00:00`).toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export default function BookDetailPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const router = useRouter();
@@ -55,6 +70,8 @@ export default function BookDetailPage() {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [entryDate, setEntryDate] = useState(() => toDateInput(new Date()));
   const [adding, setAdding] = useState(false);
+  // Day groups the user has folded away (keys like "2026-10-20")
+  const [collapsedDays, setCollapsedDays] = useState<Set<string>>(new Set());
 
   // undefined = still loading, null = this book isn't here (deleted, or no access)
   const book = useLiveQuery(async () => (await db?.books.get(bookId)) ?? null, [bookId]);
@@ -169,6 +186,28 @@ export default function BookDetailPage() {
   const totalIn = list.filter((t) => t.type === "CREDIT").reduce((sum, t) => sum + t.amount, 0);
   const totalOut = list.filter((t) => t.type !== "CREDIT").reduce((sum, t) => sum + t.amount, 0);
   const balance = totalIn - totalOut;
+
+  // Entries arrive newest-first; bucket them by calendar day, keeping that order.
+  const dayGroups: { key: string; items: typeof list; net: number }[] = [];
+  for (const t of list) {
+    const key = toDateInput(new Date(t.date));
+    let group = dayGroups[dayGroups.length - 1];
+    if (!group || group.key !== key) {
+      group = { key, items: [], net: 0 };
+      dayGroups.push(group);
+    }
+    group.items.push(t);
+    group.net += t.type === "CREDIT" ? t.amount : -t.amount;
+  }
+
+  function toggleDay(key: string) {
+    setCollapsedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   if (book === null && initialSyncDone) {
     return (
@@ -293,103 +332,138 @@ export default function BookDetailPage() {
             <p className="text-muted text-sm">Add your first debit or credit above.</p>
           </div>
         ) : (
-          <ul>
-            {transactions.map((t) =>
-              editingId === t.id ? (
-                <li key={t.id} className="ledger-row py-3">
-                  <div className="mb-2">
-                    <TypeToggle value={editType} onChange={setEditType} compact />
-                  </div>
-                  <div className="flex gap-2 mb-2">
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      value={editAmount}
-                      onChange={(e) => setEditAmount(e.target.value)}
-                      className="w-24 shrink-0 border border-line bg-white rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
-                    />
-                    <input
-                      value={editNote}
-                      onChange={(e) => setEditNote(e.target.value)}
-                      placeholder="Note"
-                      className="min-w-0 flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
-                    />
-                  </div>
-                  <input
-                    type="date"
-                    aria-label="Date"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    className="w-full mb-2 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
-                  />
-                  <div className="mb-3">
-                    <CategoryPicker
-                      compact
-                      categories={categoryList}
-                      value={stillExists(editCategoryId)}
-                      onChange={setEditCategoryId}
-                      onCreate={(name) => createCategoryLocal(bookId, name)}
-                      onAddStarter={() => addStarterCategories(bookId)}
-                      canEdit={canEditCategories}
-                      onManage={() => setShowCategories(true)}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => saveEdit(t.id)}
-                      className="bg-ledger text-paper text-xs font-medium px-3 py-1.5 rounded-md active:scale-95 transition"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="text-xs text-muted px-3 py-1.5 rounded-md hover:text-ink transition"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={() => removeTransaction(t.id)}
-                      className="text-xs text-rust px-3 py-1.5 rounded-md ml-auto hover:bg-rust/10 transition"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              ) : (
-                <li
-                  key={t.id}
-                  onClick={canEditEntries ? () => startEditing(t) : undefined}
-                  className={`ledger-row py-3 flex justify-between items-center ${
-                    canEditEntries ? "cursor-pointer active:bg-ledger-light/40 transition" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <SyncDot status={t.syncStatus} />
-                    <div className="min-w-0">
-                      <p className="text-ink text-sm break-words">{t.note || "Untitled"}</p>
-                      <p className="font-mono text-xs text-muted mt-0.5">
-                        {new Date(t.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-                        {t.categoryId && categoryNames.get(t.categoryId) && (
-                          <>
-                            {" · "}
-                            <span className="text-ink">{categoryNames.get(t.categoryId)}</span>
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <p
-                    className={`font-mono text-sm whitespace-nowrap flex-shrink-0 pl-3 ${
-                      t.type === "CREDIT" ? "text-ledger" : "text-rust"
-                    }`}
+          <div className="space-y-6">
+            {dayGroups.map((g) => {
+              const collapsed = collapsedDays.has(g.key);
+              return (
+                <section key={g.key}>
+                  <button
+                    type="button"
+                    onClick={() => toggleDay(g.key)}
+                    aria-expanded={!collapsed}
+                    className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-ledger-light border border-line text-left active:scale-[0.99] transition focus:outline-none focus:ring-2 focus:ring-ledger/40"
                   >
-                    {t.type === "CREDIT" ? "+" : "−"}₹{formatMoney(t.amount)}
-                  </p>
-                </li>
-              )
-            )}
-          </ul>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span
+                        aria-hidden
+                        className={`text-muted text-xs transition-transform ${collapsed ? "" : "rotate-90"}`}
+                      >
+                        ▶
+                      </span>
+                      <span className="font-mono text-xs tracking-[0.15em] uppercase text-ink">
+                        {dayLabel(g.key)}
+                      </span>
+                      <span className="font-mono text-xs text-muted">
+                        · {g.items.length} {g.items.length === 1 ? "entry" : "entries"}
+                      </span>
+                    </span>
+                    <span
+                      className={`font-mono text-xs whitespace-nowrap ${
+                        g.net < 0 ? "text-rust" : "text-ledger"
+                      }`}
+                    >
+                      {g.net < 0 ? "−" : "+"}₹{formatMoney(Math.abs(g.net))}
+                    </span>
+                  </button>
+                  {!collapsed && (
+                    <ul className="px-1 pt-1">
+                      {g.items.map((t) =>
+                  editingId === t.id ? (
+                    <li key={t.id} className="ledger-row py-3">
+                      <div className="mb-2">
+                        <TypeToggle value={editType} onChange={setEditType} compact />
+                      </div>
+                      <div className="flex gap-2 mb-2">
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          value={editAmount}
+                          onChange={(e) => setEditAmount(e.target.value)}
+                          className="w-24 shrink-0 border border-line bg-white rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                        />
+                        <input
+                          value={editNote}
+                          onChange={(e) => setEditNote(e.target.value)}
+                          placeholder="Note"
+                          className="min-w-0 flex-1 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                        />
+                      </div>
+                      <input
+                        type="date"
+                        aria-label="Date"
+                        value={editDate}
+                        onChange={(e) => setEditDate(e.target.value)}
+                        className="w-full mb-2 border border-line bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ledger/40 focus:border-ledger"
+                      />
+                      <div className="mb-3">
+                        <CategoryPicker
+                          compact
+                          categories={categoryList}
+                          value={stillExists(editCategoryId)}
+                          onChange={setEditCategoryId}
+                          onCreate={(name) => createCategoryLocal(bookId, name)}
+                          onAddStarter={() => addStarterCategories(bookId)}
+                          canEdit={canEditCategories}
+                          onManage={() => setShowCategories(true)}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => saveEdit(t.id)}
+                          className="bg-ledger text-paper text-xs font-medium px-3 py-1.5 rounded-md active:scale-95 transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="text-xs text-muted px-3 py-1.5 rounded-md hover:text-ink transition"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => removeTransaction(t.id)}
+                          className="text-xs text-rust px-3 py-1.5 rounded-md ml-auto hover:bg-rust/10 transition"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ) : (
+                    <li
+                      key={t.id}
+                      onClick={canEditEntries ? () => startEditing(t) : undefined}
+                      className={`ledger-row py-3 flex justify-between items-center ${
+                        canEditEntries ? "cursor-pointer active:bg-ledger-light/40 transition" : ""
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <SyncDot status={t.syncStatus} />
+                        <div className="min-w-0">
+                          <p className="text-ink text-sm break-words">{t.note || "Untitled"}</p>
+                          {t.categoryId && categoryNames.get(t.categoryId) && (
+                            <p className="font-mono text-xs text-muted mt-0.5">
+                              {categoryNames.get(t.categoryId)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <p
+                        className={`font-mono text-sm whitespace-nowrap flex-shrink-0 pl-3 ${
+                          t.type === "CREDIT" ? "text-ledger" : "text-rust"
+                        }`}
+                      >
+                        {t.type === "CREDIT" ? "+" : "−"}₹{formatMoney(t.amount)}
+                      </p>
+                    </li>
+                  )
+                      )}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
         )}
       </div>
 
