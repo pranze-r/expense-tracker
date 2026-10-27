@@ -120,6 +120,19 @@ export default function BooksPage() {
         </div>
       </header>
 
+      <div className="px-6 mb-5">
+        <Link
+          href="/loans"
+          className="group flex items-center justify-between bg-white border border-line rounded-xl px-4 py-3 active:scale-[0.98] transition"
+        >
+          <div>
+            <p className="font-medium text-ink">Lend &amp; Borrow</p>
+            <p className="font-mono text-xs text-muted mt-0.5">Money you&rsquo;ve lent or borrowed</p>
+          </div>
+          <span className="font-mono text-muted transition-transform group-active:translate-x-0.5">→</span>
+        </Link>
+      </div>
+
       <div className="flex-1 px-6">
         {loading ? (
           <p className="font-mono text-sm text-muted">Loading books…</p>

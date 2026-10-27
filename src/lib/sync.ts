@@ -3,7 +3,10 @@ import {
   type BookRole,
   type LocalBook,
   type LocalCategory,
+  type LocalLoan,
+  type LocalLoanPayment,
   type LocalTransaction,
+  type LoanDirection,
   type OutboxItem,
   type TransactionType,
 } from "./db";
@@ -675,6 +678,346 @@ async function pullTransactionsNow(bookId: string): Promise<PullResult> {
   }
 }
 
+// ---------- Loans (money lent / borrowed) ----------
+// Same local-first pattern as entries: write to this device, queue the
+// request, send it when online. Loans belong to you alone — they are not
+// part of any shared book.
+
+export async function createLoanLocal(input: {
+  person: string;
+  direction: LoanDirection;
+  amount: number;
+  note: string | null;
+  date: string;
+  dueDate: string | null;
+}): Promise<string> {
+  if (!db) throw new Error("Local database unavailable");
+  const id = newId();
+  const timestamp = nowIso();
+  const person = input.person.trim().replace(/\s+/g, " ").slice(0, 60);
+
+  const loan: LocalLoan = {
+    id,
+    ...input,
+    person,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: "pending",
+  };
+  await db.loans.put(loan);
+  await db.outbox.add({
+    entity: "loan",
+    entityId: id,
+    method: "POST",
+    url: "/api/loans",
+    payload: { id, ...input, person },
+    createdAt: timestamp,
+    attempts: 0,
+  });
+
+  flushOutbox();
+  return id;
+}
+
+export async function editLoanLocal(
+  id: string,
+  updates: {
+    person?: string;
+    direction?: LoanDirection;
+    amount?: number;
+    note?: string | null;
+    date?: string;
+    dueDate?: string | null;
+  }
+) {
+  if (!db) return;
+  const timestamp = nowIso();
+  const clean = { ...updates };
+  if (typeof clean.person === "string") clean.person = clean.person.trim().replace(/\s+/g, " ").slice(0, 60);
+
+  await db.loans.update(id, { ...clean, updatedAt: timestamp, syncStatus: "pending" });
+
+  // Fold into a create/edit that's still waiting in the queue
+  const queued = await db.outbox
+    .where({ entity: "loan", entityId: id })
+    .and((item) => item.method === "POST" || item.method === "PATCH")
+    .first();
+
+  if (queued) {
+    await db.outbox.update(queued.id!, { payload: { ...(queued.payload as object), ...clean } });
+  } else {
+    await db.outbox.add({
+      entity: "loan",
+      entityId: id,
+      method: "PATCH",
+      url: `/api/loans/${id}`,
+      payload: clean,
+      createdAt: timestamp,
+      attempts: 0,
+    });
+  }
+
+  flushOutbox();
+}
+
+// Removes a loan, its repayments, and everything queued for them from this
+// device. Returns whether the loan had ever been sent to the server.
+async function purgeLoanLocal(id: string): Promise<{ hadPendingCreate: boolean }> {
+  if (!db) return { hadPendingCreate: false };
+  const store = db;
+
+  const related = await store.outbox
+    .filter(
+      (item) =>
+        (item.entity === "loan" && item.entityId === id) || item.url.startsWith(`/api/loans/${id}/`)
+    )
+    .toArray();
+
+  await store.transaction("rw", store.loans, store.loanPayments, store.outbox, async () => {
+    await store.outbox.bulkDelete(related.map((item) => item.id!));
+    await store.loanPayments.where("loanId").equals(id).delete();
+    await store.loans.delete(id);
+  });
+
+  return {
+    hadPendingCreate: related.some((item) => item.entity === "loan" && item.method === "POST"),
+  };
+}
+
+export async function deleteLoanLocal(id: string) {
+  if (!db) return;
+  const { hadPendingCreate } = await purgeLoanLocal(id);
+  if (hadPendingCreate) return; // the server never heard of it
+
+  await db.outbox.add({
+    entity: "loan",
+    entityId: id,
+    method: "DELETE",
+    url: `/api/loans/${id}`,
+    payload: null,
+    createdAt: nowIso(),
+    attempts: 0,
+  });
+  flushOutbox();
+}
+
+export async function createLoanPaymentLocal(
+  loanId: string,
+  input: { amount: number; note: string | null; date: string }
+): Promise<string> {
+  if (!db) throw new Error("Local database unavailable");
+  const id = newId();
+  const timestamp = nowIso();
+
+  const payment: LocalLoanPayment = {
+    id,
+    loanId,
+    ...input,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    syncStatus: "pending",
+  };
+  await db.loanPayments.put(payment);
+  await db.outbox.add({
+    entity: "loanPayment",
+    entityId: id,
+    method: "POST",
+    url: `/api/loans/${loanId}/payments`,
+    payload: { id, ...input },
+    createdAt: timestamp,
+    attempts: 0,
+  });
+
+  flushOutbox();
+  return id;
+}
+
+export async function editLoanPaymentLocal(
+  loanId: string,
+  id: string,
+  updates: { amount?: number; note?: string | null; date?: string }
+) {
+  if (!db) return;
+  const timestamp = nowIso();
+
+  await db.loanPayments.update(id, { ...updates, updatedAt: timestamp, syncStatus: "pending" });
+
+  const queued = await db.outbox
+    .where({ entity: "loanPayment", entityId: id })
+    .and((item) => item.method === "POST" || item.method === "PATCH")
+    .first();
+
+  if (queued) {
+    await db.outbox.update(queued.id!, { payload: { ...(queued.payload as object), ...updates } });
+  } else {
+    await db.outbox.add({
+      entity: "loanPayment",
+      entityId: id,
+      method: "PATCH",
+      url: `/api/loans/${loanId}/payments/${id}`,
+      payload: updates,
+      createdAt: timestamp,
+      attempts: 0,
+    });
+  }
+
+  flushOutbox();
+}
+
+export async function deleteLoanPaymentLocal(loanId: string, id: string) {
+  if (!db) return;
+
+  await db.loanPayments.delete(id);
+
+  const related = await db.outbox
+    .filter((item) => item.entity === "loanPayment" && item.entityId === id)
+    .toArray();
+  await db.outbox.bulkDelete(related.map((item) => item.id!));
+  if (related.some((item) => item.method === "POST")) return; // never reached the server
+
+  await db.outbox.add({
+    entity: "loanPayment",
+    entityId: id,
+    method: "DELETE",
+    url: `/api/loans/${loanId}/payments/${id}`,
+    payload: null,
+    createdAt: nowIso(),
+    attempts: 0,
+  });
+  flushOutbox();
+}
+
+const sameLoan = (a: LocalLoan, b: LocalLoan) =>
+  a.person === b.person &&
+  a.direction === b.direction &&
+  a.amount === b.amount &&
+  a.note === b.note &&
+  a.date === b.date &&
+  a.dueDate === b.dueDate &&
+  a.createdAt === b.createdAt &&
+  a.updatedAt === b.updatedAt &&
+  a.syncStatus === b.syncStatus &&
+  a.syncError === b.syncError;
+
+const sameLoanPayment = (a: LocalLoanPayment, b: LocalLoanPayment) =>
+  a.loanId === b.loanId &&
+  a.amount === b.amount &&
+  a.note === b.note &&
+  a.date === b.date &&
+  a.createdAt === b.createdAt &&
+  a.updatedAt === b.updatedAt &&
+  a.syncStatus === b.syncStatus &&
+  a.syncError === b.syncError;
+
+export function pullLoans(options?: { fresh?: boolean }) {
+  return coalesce("loans", pullLoansNow, options?.fresh);
+}
+
+async function pullLoansNow(): Promise<PullResult> {
+  if (!db) return "failed";
+  const store = db;
+  try {
+    // Same safety rule as books/entries: only records already confirmed on
+    // the server before this request are eligible for removal.
+    const loansBefore = (await store.loans
+      .where("syncStatus")
+      .equals("synced")
+      .primaryKeys()) as string[];
+    const paymentsBefore = (await store.loanPayments
+      .where("syncStatus")
+      .equals("synced")
+      .primaryKeys()) as string[];
+
+    const res = await fetch("/api/loans");
+    if (res.status === 401) return "unauthorized";
+    if (!res.ok) return "failed";
+    const serverLoans: Array<{
+      id: string;
+      person: string;
+      direction: LoanDirection;
+      amount: number;
+      note: string | null;
+      date: string;
+      dueDate: string | null;
+      createdAt: string;
+      updatedAt: string;
+      payments: Array<{
+        id: string;
+        amount: number;
+        note: string | null;
+        date: string;
+        createdAt: string;
+        updatedAt: string;
+      }>;
+    }> = await res.json();
+
+    await store.transaction("rw", store.loans, store.loanPayments, async () => {
+      const localLoans = await store.loans.bulkGet(serverLoans.map((l) => l.id));
+      const changedLoans: LocalLoan[] = [];
+      serverLoans.forEach((l, i) => {
+        const local = localLoans[i];
+        if (local && local.syncStatus === "pending") return; // unsynced local changes win
+        const next: LocalLoan = {
+          id: l.id,
+          person: l.person,
+          direction: l.direction,
+          amount: l.amount,
+          note: l.note,
+          date: l.date,
+          dueDate: l.dueDate ?? null,
+          createdAt: l.createdAt,
+          updatedAt: l.updatedAt,
+          syncStatus: "synced",
+        };
+        if (!local || !sameLoan(local, next)) changedLoans.push(next);
+      });
+      if (changedLoans.length > 0) await store.loans.bulkPut(changedLoans);
+
+      const serverPayments = serverLoans.flatMap((l) => l.payments.map((p) => ({ ...p, loanId: l.id })));
+      const localPayments = await store.loanPayments.bulkGet(serverPayments.map((p) => p.id));
+      const changedPayments: LocalLoanPayment[] = [];
+      serverPayments.forEach((p, i) => {
+        const local = localPayments[i];
+        if (local && local.syncStatus === "pending") return;
+        const next: LocalLoanPayment = {
+          id: p.id,
+          loanId: p.loanId,
+          amount: p.amount,
+          note: p.note,
+          date: p.date,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+          syncStatus: "synced",
+        };
+        if (!local || !sameLoanPayment(local, next)) changedPayments.push(next);
+      });
+      if (changedPayments.length > 0) await store.loanPayments.bulkPut(changedPayments);
+
+      // Removed on another device
+      const serverLoanIds = new Set(serverLoans.map((l) => l.id));
+      for (const id of loansBefore) {
+        if (serverLoanIds.has(id)) continue;
+        const local = await store.loans.get(id);
+        if (local && local.syncStatus === "synced") {
+          await store.loanPayments.where("loanId").equals(id).delete();
+          await store.loans.delete(id);
+        }
+      }
+      const serverPaymentIds = new Set(serverPayments.map((p) => p.id));
+      const missing = paymentsBefore.filter((id) => !serverPaymentIds.has(id));
+      if (missing.length > 0) {
+        const missingLocals = await store.loanPayments.bulkGet(missing);
+        const toDelete = missing.filter((_, i) => missingLocals[i]?.syncStatus === "synced");
+        if (toDelete.length > 0) await store.loanPayments.bulkDelete(toDelete);
+      }
+    });
+    return "ok";
+  } catch {
+    // offline — the local copy stands
+    return "failed";
+  }
+}
+
 // ---------- Flushing the outbox ----------
 // Processes queued writes in the order they were created. One item's
 // failure doesn't block the rest — each is tried independently.
@@ -769,6 +1112,8 @@ async function markSynced(entity: OutboxItem["entity"], id: string) {
   if (!db) return;
   if (entity === "book") await db.books.update(id, { syncStatus: "synced" });
   else if (entity === "category") await db.categories.update(id, { syncStatus: "synced" });
+  else if (entity === "loan") await db.loans.update(id, { syncStatus: "synced" });
+  else if (entity === "loanPayment") await db.loanPayments.update(id, { syncStatus: "synced" });
   else await db.transactions.update(id, { syncStatus: "synced" });
 }
 
@@ -776,6 +1121,8 @@ async function markError(entity: OutboxItem["entity"], id: string, message: stri
   if (!db) return;
   if (entity === "book") await db.books.update(id, { syncStatus: "error", syncError: message });
   else if (entity === "category") await db.categories.update(id, { syncStatus: "error", syncError: message });
+  else if (entity === "loan") await db.loans.update(id, { syncStatus: "error", syncError: message });
+  else if (entity === "loanPayment") await db.loanPayments.update(id, { syncStatus: "error", syncError: message });
   else await db.transactions.update(id, { syncStatus: "error", syncError: message });
 }
 

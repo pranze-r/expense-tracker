@@ -350,15 +350,15 @@ export default function BookDetailPage() {
                       >
                         ▶
                       </span>
-                      <span className="font-mono text-xs tracking-[0.15em] uppercase text-ink">
+                      <span className="font-mono text-sm font-bold tracking-[0.12em] uppercase text-ink">
                         {dayLabel(g.key)}
                       </span>
-                      <span className="font-mono text-xs text-muted">
+                      <span className="font-mono text-xs font-bold text-muted">
                         · {g.items.length} {g.items.length === 1 ? "entry" : "entries"}
                       </span>
                     </span>
                     <span
-                      className={`font-mono text-xs whitespace-nowrap ${
+                      className={`font-mono text-sm font-bold whitespace-nowrap ${
                         g.net < 0 ? "text-rust" : "text-ledger"
                       }`}
                     >
@@ -366,10 +366,10 @@ export default function BookDetailPage() {
                     </span>
                   </button>
                   {!collapsed && (
-                    <ul className="px-1 pt-1">
+                    <ul className="pt-2 space-y-2">
                       {g.items.map((t) =>
                   editingId === t.id ? (
-                    <li key={t.id} className="ledger-row py-3">
+                    <li key={t.id} className="bg-white border border-ledger/40 rounded-lg px-3 py-3">
                       <div className="mb-2">
                         <TypeToggle value={editType} onChange={setEditType} compact />
                       </div>
@@ -433,7 +433,7 @@ export default function BookDetailPage() {
                     <li
                       key={t.id}
                       onClick={canEditEntries ? () => startEditing(t) : undefined}
-                      className={`ledger-row py-3 flex justify-between items-center ${
+                      className={`bg-white border border-line rounded-lg px-3 py-3 flex justify-between items-center ${
                         canEditEntries ? "cursor-pointer active:bg-ledger-light/40 transition" : ""
                       }`}
                     >

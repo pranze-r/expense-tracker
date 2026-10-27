@@ -3,6 +3,8 @@ import Dexie, { type Table } from "dexie";
 export type SyncStatus = "synced" | "pending" | "error";
 export type TransactionType = "DEBIT" | "CREDIT";
 export type BookRole = "OWNER" | "EDITOR" | "VIEWER";
+// LENT = you gave money (they owe you), BORROWED = you took money (you owe them)
+export type LoanDirection = "LENT" | "BORROWED";
 
 export interface LocalBook {
   id: string;
@@ -46,9 +48,37 @@ export interface LocalCategory {
   syncError?: string;
 }
 
+// Money you lent to, or borrowed from, one person. Personal to you — not
+// shared through books. Repayments are separate records (LocalLoanPayment).
+export interface LocalLoan {
+  id: string;
+  person: string;
+  direction: LoanDirection;
+  amount: number;
+  note: string | null;
+  date: string;
+  dueDate: string | null;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+  syncError?: string;
+}
+
+export interface LocalLoanPayment {
+  id: string;
+  loanId: string;
+  amount: number;
+  note: string | null;
+  date: string;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus: SyncStatus;
+  syncError?: string;
+}
+
 export interface OutboxItem {
   id?: number;
-  entity: "book" | "transaction" | "category";
+  entity: "book" | "transaction" | "category" | "loan" | "loanPayment";
   entityId: string;
   method: "POST" | "PATCH" | "DELETE";
   url: string;
@@ -62,6 +92,8 @@ class AppDB extends Dexie {
   books!: Table<LocalBook, string>;
   transactions!: Table<LocalTransaction, string>;
   categories!: Table<LocalCategory, string>;
+  loans!: Table<LocalLoan, string>;
+  loanPayments!: Table<LocalLoanPayment, string>;
   outbox!: Table<OutboxItem, number>;
 
   constructor() {
@@ -78,6 +110,15 @@ class AppDB extends Dexie {
       transactions: "id, bookId, date, syncStatus",
       outbox: "++id, entity, entityId, createdAt",
       categories: "id, bookId",
+    });
+    // v3 adds the lend/borrow tables. Nothing already stored is touched.
+    this.version(3).stores({
+      books: "id, updatedAt, syncStatus",
+      transactions: "id, bookId, date, syncStatus",
+      outbox: "++id, entity, entityId, createdAt",
+      categories: "id, bookId",
+      loans: "id, direction, date, syncStatus",
+      loanPayments: "id, loanId, syncStatus",
     });
   }
 }

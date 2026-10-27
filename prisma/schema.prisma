@@ -20,6 +20,13 @@ enum TransactionType {
   CREDIT
 }
 
+// LENT = you gave money to someone (they owe you), BORROWED = you took money
+// from someone (you owe them)
+enum LoanDirection {
+  LENT
+  BORROWED
+}
+
 model User {
   id          String       @id
   email       String       @unique
@@ -27,6 +34,7 @@ model User {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   memberships BookMember[]
+  loans       Loan[]
 }
 
 model Book {
@@ -86,4 +94,37 @@ model Transaction {
   bookId          String
   category        Category?       @relation(fields: [categoryId], references: [id])
   categoryId      String?
+}
+
+// A personal record of money lent to, or borrowed from, one person. Private to
+// the user who created it (not shared through books).
+model Loan {
+  id        String        @id @default(uuid())
+  person    String
+  direction LoanDirection
+  amount    Float
+  note      String?
+  date      DateTime      @default(now())
+  dueDate   DateTime?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  payments  LoanPayment[]
+
+  @@index([userId])
+}
+
+// Money paid back against a loan (in part or in full)
+model LoanPayment {
+  id        String   @id @default(uuid())
+  amount    Float
+  note      String?
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  loan      Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  loanId    String
+
+  @@index([loanId])
 }
